@@ -2,9 +2,24 @@ from contextlib import contextmanager
 import time, traceback, requests
 import logging
 from io import StringIO
-from payloads import save_failed_payload
+from payloads import save_failed_payload,replay_failed_payloads
 from datetime import datetime
 import json
+import sys
+
+class StreamTee:
+    """Writes to both the original stream and a buffer (like StringIO)."""
+    def __init__(self, original, copy_to):
+        self.original = original
+        self.copy_to = copy_to
+
+    def write(self, message):
+        self.original.write(message)
+        self.copy_to.write(message)
+
+    def flush(self):
+        self.original.flush()
+        self.copy_to.flush()
 
 class Config:
    api_key = None
@@ -19,12 +34,11 @@ class Seer:
                 response = requests.post(url,headers=headers, json=payload,allow_redirects=False)
                 req = response.request
 
-                print("Request method:", req.method)
-                print("Request URL:", req.url)
-                print("Request headers:", req.headers)
-                print("Request body:", req.body)
+                # print("Request method:", req.method)
+                # print("Request URL:", req.url)
+                # print("Request headers:", req.headers)
+                # print("Request body:", req.body)
                 response.raise_for_status()
-                print('Success')
                 return response
             except Exception as e:
                 if attempt == max_retries - 1:
@@ -42,11 +56,6 @@ class Seer:
         log_contents = None
         handler = None
         run_id = None
-        if capture_logs:
-            log_stream = StringIO()
-            handler = logging.StreamHandler(log_stream)
-            logger = logging.getLogger()
-            logger.addHandler(handler)
         payload={
             "job_name": job_name,
             "status": "running",
@@ -65,12 +74,19 @@ class Seer:
         try:
             id_response = self.post_with_backoff("https://api.seer.ansrstudio.com/monitoring", payload,headers, max_retries=5, base_delay=1, max_delay=30)
             id_response_dict = json.loads(id_response.json())
-            print(id_response_dict)
             run_id = id_response_dict.get("run_id")
         except Exception as e:
             print(e)
-            raise
             save_failed_payload(payload, "monitoring") 
+        if capture_logs:
+            log_stream = StringIO()
+            sys.stdout = StreamTee(sys.stdout, log_stream)
+
+            # Hook up logging to the same buffer
+            handler = logging.StreamHandler(log_stream)
+            logger = logging.getLogger()
+            logger.setLevel(logging.DEBUG)
+            logger.addHandler(handler)
         try:
             yield  # This is where the user's code runs
             status = 'success'
@@ -96,7 +112,6 @@ class Seer:
                     "tags": tags,
                     "logs": log_contents
                 }
-                print(payload)
                 try:
                     self.post_with_backoff("https://api.seer.ansrstudio.com/monitoring", payload,headers, max_retries=5, base_delay=1, max_delay=30)
                 except Exception as e:
@@ -106,15 +121,20 @@ class Seer:
                 print("Seer unable to start.")            
 
     @contextmanager
-    def heartbeat(self,job_name):
-        current_time = time.time()
+    def heartbeat(self,job_name,metadata=None):
+        current_time = datetime.now().isoformat(sep=' ')
         payload={
             "app": "seer",
             "job_name": job_name,
             "current_time": current_time,
+            "metadata": metadata
+        }
+        headers = {
+            "auth": getattr(self, "api_key", None),
+            "Content-Type": "application/json"
         }
         try:
-            self.post_with_backoff("https://api.seer.ansrstudio.com/heartbeat", payload, max_retries=5, base_delay=1, max_delay=30)
+            self.post_with_backoff("https://api.seer.ansrstudio.com/heartbeat", payload,headers, max_retries=5, base_delay=1, max_delay=30)
         except Exception as e:
             save_failed_payload(payload, "heartbeat")
             raise

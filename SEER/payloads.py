@@ -14,7 +14,7 @@ def save_failed_payload(payload, endpoint):
     print(f"Seer upload failed, saving to {filepath}")
     print("Call replay_failed_payloads to retrigger events.")
 
-def replay_failed_payloads(api_key):
+def replay_failed_payloads(api_key: str):
     temp_dir = os.path.join(os.path.dirname(__file__), "failed_payloads")
     if not os.path.exists(temp_dir):
         return
@@ -22,7 +22,10 @@ def replay_failed_payloads(api_key):
         filepath = os.path.join(temp_dir, filename)
         with open(filepath, "r") as f:
             payload = json.load(f)
-        payload['api_key'] = api_key
+        headers = {
+            "auth": api_key,
+            "Content-Type": "application/json"
+        }
         if "monitoring" in filename:
             url = "https://api.seer.ansrstudio.com/monitoring"
         elif "heartbeat" in filename:
@@ -30,7 +33,7 @@ def replay_failed_payloads(api_key):
         else:
             continue
         try:
-            requests.post(url, json=payload)
+            requests.post(url,headers=headers, json=payload)
             os.remove(filepath)
         except Exception:
             continue  # Leave the file for next retry
