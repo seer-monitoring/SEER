@@ -1,0 +1,15 @@
+LICENSE
+README.md
+pyproject.toml
+setup.cfg
+seerpy/__init__.py
+seerpy/payloads.py
+seerpy/seer.py
+seerpy/setup.py
+seerpy.egg-info/PKG-INFO
+seerpy.egg-info/SOURCES.txt
+seerpy.egg-info/dependency_links.txt
+seerpy.egg-info/requires.txt
+seerpy.egg-info/top_level.txt
+tests/test.py
+tests/test_2.py

@@ -1,0 +1,29 @@
+[build-system]
+requires = ["setuptools>=61.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "seerpy"
+version = "0.1.0"
+description = "A lightweight monitoring and heartbeat client for Seer API"
+readme = "README.md"
+requires-python = ">=3.8"
+dependencies = [
+    "requests",
+    "python-dotenv"
+]
+authors = [
+    { name="SEER", email="support@mg.ansrstudio.com" }
+]
+urls = { "Homepage" = "https://github.com/xlor1009/seer" }
+
+# Specify license
+license = "LicenseRef-Seer-4.2"
+license-files = ["LICEN[CS]E*"]
+classifiers = [
+    "Programming Language :: Python :: 3",
+    "Operating System :: OS Independent"
+]
+
+
+

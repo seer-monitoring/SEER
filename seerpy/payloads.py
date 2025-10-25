@@ -23,7 +23,7 @@ def replay_failed_payloads(api_key: str):
         with open(filepath, "r") as f:
             payload = json.load(f)
         headers = {
-            "auth": api_key,
+            "Authorization": api_key,
             "Content-Type": "application/json"
         }
         if "monitoring" in filename:

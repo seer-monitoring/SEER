@@ -21,8 +21,6 @@ class StreamTee:
         self.original.flush()
         self.copy_to.flush()
 
-class Config:
-   api_key = None
 
 class Seer:
     def __init__(self,apiKey: str):
@@ -31,7 +29,7 @@ class Seer:
     def post_with_backoff(self,url, payload,headers, max_retries=5, base_delay=1, max_delay=30):
         for attempt in range(max_retries):
             try:
-                response = requests.post(url,headers=headers, json=payload,allow_redirects=False)
+                response = requests.post(url,headers=headers, json=payload,allow_redirects=False,timeout=100)
                 req = response.request
 
                 # print("Request method:", req.method)
@@ -48,7 +46,7 @@ class Seer:
 
 
     @contextmanager
-    def monitor(self,job_name, capture_logs=False,tags=None,metadata:dict =None):
+    def monitor(self,job_name, capture_logs=False,metadata:dict =None):
         start_time = datetime.now().isoformat(sep=' ')
         status = "success"
         error = None
@@ -64,11 +62,11 @@ class Seer:
             "end_time": None ,
             "metadata": metadata,
             "error_details": error,
-            "tags": tags,
+            "tags": None,
             "logs": log_contents
         }
         headers = {
-            "auth": getattr(self, "api_key", None),
+            "Authorization": getattr(self, "api_key", None),
             "Content-Type": "application/json"
         }
         try:
@@ -80,12 +78,14 @@ class Seer:
             save_failed_payload(payload, "monitoring") 
         if capture_logs:
             log_stream = StringIO()
+            original_stdout = sys.stdout
             sys.stdout = StreamTee(sys.stdout, log_stream)
 
             # Hook up logging to the same buffer
             handler = logging.StreamHandler(log_stream)
             logger = logging.getLogger()
             logger.setLevel(logging.DEBUG)
+            logger.handlers = []
             logger.addHandler(handler)
         try:
             yield  # This is where the user's code runs
@@ -95,6 +95,7 @@ class Seer:
             error = traceback.format_exc()
             raise  # re-raises the error so the script fails visibly
         finally:
+            sys.stdout = original_stdout
             end_time = datetime.now().isoformat(sep=' ')
             if capture_logs and handler:
                 handler.flush()
@@ -109,7 +110,7 @@ class Seer:
                     "end_time": end_time ,
                     "metadata": metadata,
                     "error_details": error,
-                    "tags": tags,
+                    "tags": None,
                     "logs": log_contents
                 }
                 try:
@@ -120,7 +121,6 @@ class Seer:
             else:
                 print("Seer unable to start.")            
 
-    @contextmanager
     def heartbeat(self,job_name,metadata=None):
         current_time = datetime.now().isoformat(sep=' ')
         payload={
@@ -130,7 +130,7 @@ class Seer:
             "metadata": metadata
         }
         headers = {
-            "auth": getattr(self, "api_key", None),
+            "Authorization": getattr(self, "api_key", None),
             "Content-Type": "application/json"
         }
         try:

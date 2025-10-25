@@ -1,0 +1,139 @@
+Metadata-Version: 2.4
+Name: seerpy
+Version: 0.1.0
+Summary: A lightweight monitoring and heartbeat client for Seer API
+Author-email: SEER <support@mg.ansrstudio.com>
+License-Expression: LicenseRef-Seer-4.2
+Project-URL: Homepage, https://github.com/xlor1009/seer
+Classifier: Programming Language :: Python :: 3
+Classifier: Operating System :: OS Independent
+Requires-Python: >=3.8
+Description-Content-Type: text/markdown
+License-File: LICENSE
+Requires-Dist: requests
+Requires-Dist: python-dotenv
+Dynamic: license-file
+
+# SeerPy
+
+SeerPy is the official Python client for the Seer Monitoring API by Ansr Studio. It helps you monitor jobs, capture logs, record heartbeats, and automatically report execution results to your Seer dashboard.
+
+## 🚀 Installation
+
+```bash
+pip install seerpy
+```
+
+## 🔑 Getting Started
+
+### 1. Import and initialize
+
+```python
+from seerpy import Seer
+
+# Initialize with your Seer API key
+seer = Seer(apiKey="YOUR_SEER_API_KEY")
+```
+
+### 2. Monitor jobs
+
+Use the `monitor()` context manager to automatically track job execution time, status, and logs.
+
+```python
+with seer.monitor("daily_etl_job", capture_logs=True, metadata={"source": "data-lake"}):
+    print("Running ETL job...")
+    # Your job logic here
+    raise Exception("Simulated error")  # This will be logged and marked as failed
+```
+
+When you run this, Seer automatically captures:
+
+- Start and end timestamps
+- Job status (running, success, or failed)
+- Logs (if `capture_logs=True`)
+- Error traceback (if any)
+
+## 💓 Heartbeat Monitoring
+
+Send regular heartbeats from long-running processes to confirm they’re still active.
+
+```python
+seer.heartbeat("worker_process", metadata={"pid": 1234, "status": "active"})
+```
+
+This helps detect downtime or stalled jobs in real time.
+
+## ⚙️ Error Handling & Offline Support
+
+If the Seer API is temporarily unavailable, payloads are safely stored locally using helpers like `payloads.save_failed_payload`. You can later replay them manually:
+
+```python
+from payloads import replay_failed_payloads
+
+replay_failed_payloads()
+```
+
+## 🔐 Using Environment Variables (Recommended)
+
+Store your API key in an environment variable for safer usage in production.
+
+Create a `.env` file:
+
+```
+SEER_API_KEY=your_api_key_here
+```
+
+Load it in your code:
+
+```python
+from dotenv import load_dotenv
+import os
+from seerpy import Seer
+
+load_dotenv()
+api_key = os.getenv("SEER_API_KEY")
+seer = Seer(apiKey=api_key)
+```
+
+## 🧩 API Reference
+
+| Method                                                 | Description                                |
+| ------------------------------------------------------ | ------------------------------------------ |
+| `Seer(apiKey)`                                         | Initialize a new Seer client               |
+| `monitor(job_name, capture_logs=False, metadata=None)` | Context manager to monitor a code block    |
+| `heartbeat(job_name, metadata=None)`                   | Send a heartbeat signal for an ongoing job |
+
+## 📦 Example: Full Worker Script
+
+```python
+from dotenv import load_dotenv
+import os
+from seerpy import Seer
+
+load_dotenv()
+seer = Seer(apiKey=os.getenv("SEER_API_KEY"))
+
+def run_job():
+    with seer.monitor("example_worker", capture_logs=True, metadata={"env": "prod"}):
+        print("Starting work...")
+        # simulate work
+        for i in range(3):
+            print(f"step {i+1}")
+        # optionally send heartbeat during long tasks
+        seer.heartbeat("example_worker", metadata={"progress": "50%"})
+        print("Work complete.")
+
+if __name__ == "__main__":
+    run_job()
+```
+
+## 🛡️ License
+
+Copyright (c) 2025 Ansr Studio.  
+All rights reserved. Use of this software is permitted solely for connecting to and interacting with the Seer API. Redistribution, modification, or any other use of this code is prohibited without written permission from Ansr Studio. See the LICENSE file for details.
+
+## 🧠 About
+
+Seer is a monitoring and observability platform built by Ansr Studio. It helps data engineers and developers track, analyze, and debug their workflows effortlessly.
+
+Learn more at: https://ansrstudio.com
