@@ -2,8 +2,8 @@ from contextlib import contextmanager
 import time, traceback, requests
 import logging
 from io import StringIO
-from payloads import save_failed_payload,replay_failed_payloads
-from datetime import datetime
+from .payloads import save_failed_payload,replay_failed_payloads
+from datetime import datetime,timezone
 import json
 import sys
 
@@ -36,7 +36,13 @@ class Seer:
                 # print("Request URL:", req.url)
                 # print("Request headers:", req.headers)
                 # print("Request body:", req.body)
-                response.raise_for_status()
+                try:
+                    response.raise_for_status()
+                except requests.exceptions.HTTPError as e:
+                    # Include the response text in the exception message
+                    raise requests.exceptions.HTTPError(
+                        f"{e}\nResponse body:\n{response.text}"
+                    ) from e
                 return response
             except Exception as e:
                 if attempt == max_retries - 1:
@@ -47,13 +53,14 @@ class Seer:
 
     @contextmanager
     def monitor(self,job_name, capture_logs=False,metadata:dict =None):
-        start_time = datetime.now().isoformat(sep=' ')
+        start_time = datetime.now(timezone.utc).isoformat(sep=' ')
         status = "success"
         error = None
         log_stream = None
         log_contents = None
         handler = None
         run_id = None
+        seer_ready = True
         payload={
             "job_name": job_name,
             "status": "running",
@@ -73,9 +80,13 @@ class Seer:
             id_response = self.post_with_backoff("https://api.seer.ansrstudio.com/monitoring", payload,headers, max_retries=5, base_delay=1, max_delay=30)
             id_response_dict = json.loads(id_response.json())
             run_id = id_response_dict.get("run_id")
+            if seer_ready:
+                print('✓ Connected to SEER monitoring') 
+                print(f'✓ Pipeline "{job_name}" registered')
         except Exception as e:
             print(e)
             save_failed_payload(payload, "monitoring") 
+            seer_ready = False
         if capture_logs:
             log_stream = StringIO()
             original_stdout = sys.stdout
@@ -87,7 +98,11 @@ class Seer:
             logger.setLevel(logging.DEBUG)
             logger.handlers = []
             logger.addHandler(handler)
+            if seer_ready:
+                print('✓ Capturing Logs')
         try:
+            if seer_ready:
+                print('→ Monitoring active.') 
             yield  # This is where the user's code runs
             status = 'success'
         except Exception as e:
@@ -96,7 +111,7 @@ class Seer:
             raise  # re-raises the error so the script fails visibly
         finally:
             sys.stdout = original_stdout
-            end_time = datetime.now().isoformat(sep=' ')
+            end_time = datetime.now(timezone.utc).isoformat(sep=' ')
             if capture_logs and handler:
                 handler.flush()
                 logger.removeHandler(handler)
@@ -115,14 +130,16 @@ class Seer:
                 }
                 try:
                     self.post_with_backoff("https://api.seer.ansrstudio.com/monitoring", payload,headers, max_retries=5, base_delay=1, max_delay=30)
+                    print('✓ Monitoring complete.')
                 except Exception as e:
                     save_failed_payload(payload, "monitoring")
                     raise 
             else:
+                save_failed_payload(payload, "monitoring") 
                 print("Seer unable to start.")            
 
     def heartbeat(self,job_name,metadata=None):
-        current_time = datetime.now().isoformat(sep=' ')
+        current_time = datetime.now(timezone.utc).isoformat(sep=' ')
         payload={
             "app": "seer",
             "job_name": job_name,
@@ -135,6 +152,7 @@ class Seer:
         }
         try:
             self.post_with_backoff("https://api.seer.ansrstudio.com/heartbeat", payload,headers, max_retries=5, base_delay=1, max_delay=30)
+            print('Heartbeat recived')
         except Exception as e:
             save_failed_payload(payload, "heartbeat")
             raise

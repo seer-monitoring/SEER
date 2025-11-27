@@ -1,27 +1,28 @@
-from setuptools import setup
+from setuptools import setup, find_packages
 
 setup(
-    name='SEER',
-    version='0.1.0',    
-    description='A example Python package',
-    url='https://github.com/shuds13/pyexample',
-    author='ANSR Studios',
-    author_email='shudson@anl.gov',
-    license='BSD 2-clause',
-    packages=['pyexample'],
-    install_requires=['mpi4py>=2.0',
-                      'numpy',                     
-                      ],
-
+    name='seerpy',
+    version='0.1.0',
+    description='A lightweight monitoring and heartbeat client for Seer API',
+    long_description=open('README.md', encoding='utf-8').read(),
+    long_description_content_type='text/markdown',
+    url='https://github.com/xlor1009/seer',
+    author='SEER',
+    author_email='support@mg.ansrstudio.com',
+    license='LicenseRef-Seer-4.2',
+    packages=find_packages(),
+    python_requires='>=3.8',
+    install_requires=[
+        'requests',
+        'python-dotenv'
+    ],
     classifiers=[
         'Development Status :: 1 - Planning',
         'Intended Audience :: Science/Research',
-        'License :: OSI Approved :: BSD License',  
-        'Operating System :: POSIX :: Linux',        
-        'Programming Language :: Python :: 2',
-        'Programming Language :: Python :: 2.7',
         'Programming Language :: Python :: 3',
-        'Programming Language :: Python :: 3.4',
-        'Programming Language :: Python :: 3.5',
+        'Operating System :: OS Independent'
     ],
+    include_package_data=True,
+    # If you want to include LICENSE explicitly in the wheel/sdist
+    data_files=[('', ['LICENSE'])]
 )
