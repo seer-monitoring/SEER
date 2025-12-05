@@ -110,7 +110,8 @@ class Seer:
             error = traceback.format_exc()
             raise  # re-raises the error so the script fails visibly
         finally:
-            sys.stdout = original_stdout
+            if capture_logs:
+                sys.stdout = original_stdout
             end_time = datetime.now(timezone.utc).isoformat(sep=' ')
             if capture_logs and handler:
                 handler.flush()

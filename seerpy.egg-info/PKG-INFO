@@ -1,10 +1,10 @@
 Metadata-Version: 2.4
 Name: seerpy
-Version: 0.1.0
+Version: 0.1.2
 Summary: A lightweight monitoring and heartbeat client for Seer API
 Author-email: SEER <support@mg.ansrstudio.com>
 License-Expression: LicenseRef-Seer-4.2
-Project-URL: Homepage, https://github.com/xlor1009/seer
+Project-URL: Homepage, https://github.com/seer-monitoring/seer
 Classifier: Programming Language :: Python :: 3
 Classifier: Operating System :: OS Independent
 Requires-Python: >=3.8
