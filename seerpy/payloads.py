@@ -1,7 +1,27 @@
 import os
 import json
 import requests
+import time
 from datetime import datetime
+
+def post_with_backoff(url, payload,headers, max_retries=5, base_delay=1, max_delay=30):
+    for attempt in range(max_retries):
+        try:
+            response = requests.post(url,headers=headers, json=payload,allow_redirects=False,timeout=100)
+            req = response.request
+            try:
+                response.raise_for_status()
+            except requests.exceptions.HTTPError as e:
+                # Include the response text in the exception message
+                raise requests.exceptions.HTTPError(
+                    f"{e}\nResponse body:\n{response.text}"
+                ) from e
+            return response
+        except Exception as e:
+            if attempt == max_retries - 1:
+                raise  # Give up after max_retries
+            delay = min(base_delay * (2 ** attempt), max_delay)
+            time.sleep(delay)
 
 def save_failed_payload(payload, endpoint):
     temp_dir = os.path.join(os.path.dirname(__file__), "failed_payloads")
@@ -27,9 +47,13 @@ def replay_failed_payloads(api_key: str):
             "Content-Type": "application/json"
         }
         if "monitoring" in filename:
-            url = "https://api.seer.ansrstudio.com/monitoring"
+            url = "https://api.ansrstudio.com/monitoring"
+            post_with_backoff(url, payload,headers)
+            print(f"Successfully sent {payload} to SEER")
         elif "heartbeat" in filename:
-            url = "https://api.seer.ansrstudio.com/heartbeat"
+            url = "https://api.ansrstudio.com/heartbeat"
+            post_with_backoff(url, payload,headers)
+            print(f"Successfully sent {payload} to SEER")
         else:
             continue
         try:

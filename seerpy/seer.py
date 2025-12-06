@@ -31,11 +31,6 @@ class Seer:
             try:
                 response = requests.post(url,headers=headers, json=payload,allow_redirects=False,timeout=100)
                 req = response.request
-
-                # print("Request method:", req.method)
-                # print("Request URL:", req.url)
-                # print("Request headers:", req.headers)
-                # print("Request body:", req.body)
                 try:
                     response.raise_for_status()
                 except requests.exceptions.HTTPError as e:
@@ -77,7 +72,7 @@ class Seer:
             "Content-Type": "application/json"
         }
         try:
-            id_response = self.post_with_backoff("https://api.seer.ansrstudio.com/monitoring", payload,headers, max_retries=5, base_delay=1, max_delay=30)
+            id_response = self.post_with_backoff("https://api.ansrstudio.com/monitoring", payload,headers, max_retries=5, base_delay=1, max_delay=30)
             id_response_dict = json.loads(id_response.json())
             run_id = id_response_dict.get("run_id")
             if seer_ready:
@@ -130,7 +125,7 @@ class Seer:
                     "logs": log_contents
                 }
                 try:
-                    self.post_with_backoff("https://api.seer.ansrstudio.com/monitoring", payload,headers, max_retries=5, base_delay=1, max_delay=30)
+                    self.post_with_backoff("https://api.ansrstudio.com/monitoring", payload,headers, max_retries=5, base_delay=1, max_delay=30)
                     print('✓ Monitoring complete.')
                 except Exception as e:
                     save_failed_payload(payload, "monitoring")
@@ -152,7 +147,7 @@ class Seer:
             "Content-Type": "application/json"
         }
         try:
-            self.post_with_backoff("https://api.seer.ansrstudio.com/heartbeat", payload,headers, max_retries=5, base_delay=1, max_delay=30)
+            self.post_with_backoff("https://api.ansrstudio.com/heartbeat", payload,headers, max_retries=5, base_delay=1, max_delay=30)
             print('Heartbeat recived')
         except Exception as e:
             save_failed_payload(payload, "heartbeat")
