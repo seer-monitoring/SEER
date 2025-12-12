@@ -39,25 +39,27 @@ def replay_failed_payloads(api_key: str):
     if not os.path.exists(temp_dir):
         return
     for filename in os.listdir(temp_dir):
-        filepath = os.path.join(temp_dir, filename)
-        with open(filepath, "r") as f:
-            payload = json.load(f)
-        headers = {
-            "Authorization": api_key,
-            "Content-Type": "application/json"
-        }
-        if "monitoring" in filename:
-            url = "https://api.ansrstudio.com/monitoring"
-            post_with_backoff(url, payload,headers)
-            print(f"Successfully sent {payload} to SEER")
-        elif "heartbeat" in filename:
-            url = "https://api.ansrstudio.com/heartbeat"
-            post_with_backoff(url, payload,headers)
-            print(f"Successfully sent {payload} to SEER")
-        else:
-            continue
-        try:
-            requests.post(url,headers=headers, json=payload)
-            os.remove(filepath)
-        except Exception:
-            continue  # Leave the file for next retry
+        if filename.endswith("json"):
+            filepath = os.path.join(temp_dir, filename)
+            print(f"Reading: {filepath}")
+            with open(filepath, "r") as f:
+                payload = json.load(f)
+            headers = {
+                "Authorization": api_key,
+                "Content-Type": "application/json"
+            }
+            if "monitoring" in filename:
+                url = "https://api.ansrstudio.com/monitoring"
+                post_with_backoff(url, payload,headers)
+                print(f"Successfully sent {payload} to SEER")
+            elif "heartbeat" in filename:
+                url = "https://api.ansrstudio.com/heartbeat"
+                post_with_backoff(url, payload,headers)
+                print(f"Successfully sent {payload} to SEER")
+            else:
+                continue
+            try:
+                requests.post(url,headers=headers, json=payload)
+                os.remove(filepath)
+            except Exception:
+                continue  # Leave the file for next retry

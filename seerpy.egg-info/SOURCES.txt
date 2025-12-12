@@ -1,7 +1,6 @@
 LICENSE
 README.md
 pyproject.toml
-setup.cfg
 seerpy/__init__.py
 seerpy/payloads.py
 seerpy/seer.py
