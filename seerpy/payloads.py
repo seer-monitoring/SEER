@@ -50,16 +50,14 @@ def replay_failed_payloads(api_key: str):
             }
             if "monitoring" in filename:
                 url = "https://api.ansrstudio.com/monitoring"
-                post_with_backoff(url, payload,headers)
-                print(f"Successfully sent {payload} to SEER")
             elif "heartbeat" in filename:
                 url = "https://api.ansrstudio.com/heartbeat"
-                post_with_backoff(url, payload,headers)
-                print(f"Successfully sent {payload} to SEER")
             else:
                 continue
             try:
-                requests.post(url,headers=headers, json=payload)
+                post_with_backoff(url, payload,headers)
+                print(f"Successfully sent {payload} to SEER")
                 os.remove(filepath)
             except Exception:
+                print("Unable to send payload to SEER.")
                 continue  # Leave the file for next retry

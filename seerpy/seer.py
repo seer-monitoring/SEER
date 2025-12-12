@@ -33,15 +33,15 @@ class Seer:
                 req = response.request
                 try:
                     response.raise_for_status()
+                    return response
+                    
                 except requests.exceptions.HTTPError as e:
                     # Include the response text in the exception message
-                    raise requests.exceptions.HTTPError(
-                        f"{e}\nResponse body:\n{response.text}"
-                    ) from e
-                return response
+                    print("X Failed Connecting to SEER:\n")
+                    print(f"{e}\nResponse body:\n{response.text}")
             except Exception as e:
                 if attempt == max_retries - 1:
-                    raise  # Give up after max_retries
+                    print("X Error Connecting to SEER. Continuing without SEER Monitoring.")
                 delay = min(base_delay * (2 ** attempt), max_delay)
                 time.sleep(delay)
 
@@ -99,7 +99,6 @@ class Seer:
             if seer_ready:
                 print('→ Monitoring active.') 
             yield  # This is where the user's code runs
-            status = 'success'
         except Exception as e:
             status = "failed"
             error = traceback.format_exc()
