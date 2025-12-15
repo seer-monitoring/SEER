@@ -2,7 +2,7 @@ from setuptools import setup, find_packages
 
 setup(
     name='seerpy',
-    version='0.1.6',
+    version='0.1.7',
     description='A lightweight monitoring and heartbeat client for Seer API',
     long_description=open('README.md', encoding='utf-8').read(),
     long_description_content_type='text/markdown',
