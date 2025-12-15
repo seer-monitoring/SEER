@@ -39,9 +39,11 @@ class Seer:
                     # Include the response text in the exception message
                     print("X Failed Connecting to SEER:\n")
                     print(f"{e}\nResponse body:\n{response.text}")
+                    raise
             except Exception as e:
                 if attempt == max_retries - 1:
-                    print("X Error Connecting to SEER. Continuing without SEER Monitoring.")
+                    print("X Error Connecting to SEER. Continuing without SEER Monitoring. Please Check https://status.seer.ansrstudio.com")
+                    raise
                 delay = min(base_delay * (2 ** attempt), max_delay)
                 time.sleep(delay)
 
@@ -98,6 +100,7 @@ class Seer:
         try:
             if seer_ready:
                 print('→ Monitoring active.') 
+            print('Starting Code...')
             yield  # This is where the user's code runs
         except Exception as e:
             status = "failed"
@@ -136,7 +139,6 @@ class Seer:
     def heartbeat(self,job_name,metadata=None):
         current_time = datetime.now(timezone.utc).isoformat(sep=' ')
         payload={
-            "app": "seer",
             "job_name": job_name,
             "current_time": current_time,
             "metadata": metadata
@@ -150,4 +152,4 @@ class Seer:
             print('Heartbeat recived')
         except Exception as e:
             save_failed_payload(payload, "heartbeat")
-            raise
+	
