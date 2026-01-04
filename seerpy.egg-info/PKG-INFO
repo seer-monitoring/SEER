@@ -1,6 +1,6 @@
 Metadata-Version: 2.4
 Name: seerpy
-Version: 0.1.6
+Version: 0.1.8
 Summary: A lightweight monitoring and heartbeat client for Seer API
 Author-email: SEER <support@mg.ansrstudio.com>
 License-Expression: LicenseRef-Seer-4.2

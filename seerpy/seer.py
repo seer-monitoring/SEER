@@ -57,6 +57,7 @@ class Seer:
         log_contents = None
         handler = None
         run_id = None
+        monitoring_payload_saved = False
         seer_ready = True
         payload={
             "job_name": job_name,
@@ -83,6 +84,7 @@ class Seer:
         except Exception as e:
             print(e)
             save_failed_payload(payload, "monitoring") 
+            monitoring_payload_saved = True
             seer_ready = False
         if capture_logs:
             log_stream = StringIO()
@@ -122,7 +124,7 @@ class Seer:
                     "start_time": start_time,
                     "end_time": end_time ,
                     "metadata": metadata,
-                    "error_details": error,
+                    "error_details": error, 
                     "tags": None,
                     "logs": log_contents
                 }
@@ -133,7 +135,8 @@ class Seer:
                     save_failed_payload(payload, "monitoring")
                     raise 
             else:
-                save_failed_payload(payload, "monitoring") 
+                if not monitoring_payload_saved:
+                    save_failed_payload(payload, "monitoring") 
                 print("Seer unable to start.")            
 
     def heartbeat(self,job_name,metadata=None):
