@@ -1,14 +1,34 @@
-from contextlib import contextmanager
-import time, traceback, requests
+"""Seer monitoring client."""
+
+from __future__ import annotations
+
+import atexit
 import logging
-from io import StringIO
-from .payloads import save_failed_payload,replay_failed_payloads
-from datetime import datetime,timezone
-import json
 import sys
+import threading
+import traceback
+import uuid
+from contextlib import contextmanager
+from datetime import datetime, timezone
+from io import StringIO
+from typing import Any, Dict, Iterator, List, Optional
+
+import requests
+
+from .http import parse_json_response, post_with_backoff
+from .payloads import (
+    ReplayResult,
+    replay_failed_payloads,
+    resolve_base_url,
+    save_failed_payload,
+)
+
+DEFAULT_REPLAY_INTERVAL = 60.0
+
 
 class StreamTee:
     """Writes to both the original stream and a buffer (like StringIO)."""
+
     def __init__(self, original, copy_to):
         self.original = original
         self.copy_to = copy_to
@@ -21,138 +41,260 @@ class StreamTee:
         self.original.flush()
         self.copy_to.flush()
 
+    def isatty(self):
+        return getattr(self.original, "isatty", lambda: False)()
+
+    def fileno(self):
+        return self.original.fileno()
+
+    @property
+    def encoding(self):
+        return getattr(self.original, "encoding", None)
+
 
 class Seer:
-    def __init__(self,apiKey: str):
-        self.api_key = apiKey
+    def __init__(
+        self,
+        apiKey: Optional[str] = None,
+        *,
+        api_key: Optional[str] = None,
+        auto_replay: bool = False,
+        background_replay: bool = False,
+        replay_interval: float = DEFAULT_REPLAY_INTERVAL,
+        base_url: Optional[str] = None,
+        timeout: float = 30,
+    ):
+        key = api_key or apiKey
+        if not key:
+            raise ValueError("API key is required (api_key or apiKey)")
+        if replay_interval <= 0:
+            raise ValueError("replay_interval must be > 0")
 
-    def post_with_backoff(self,url, payload,headers, max_retries=5, base_delay=1, max_delay=30):
-        for attempt in range(max_retries):
+        self.api_key = key
+        self.base_url = resolve_base_url(base_url)
+        self.timeout = timeout
+        self.replay_interval = float(replay_interval)
+        self._session = requests.Session()
+        self._bg_stop = threading.Event()
+        self._bg_thread: Optional[threading.Thread] = None
+        self._atexit_registered = False
+
+        if auto_replay:
             try:
-                response = requests.post(url,headers=headers, json=payload,allow_redirects=False,timeout=100)
-                req = response.request
-                try:
-                    response.raise_for_status()
-                    return response
-                    
-                except requests.exceptions.HTTPError as e:
-                    # Include the response text in the exception message
-                    print("X Failed Connecting to SEER:\n")
-                    print(f"{e}\nResponse body:\n{response.text}")
-                    raise
-            except Exception as e:
-                if attempt == max_retries - 1:
-                    print("X Error Connecting to SEER. Continuing without SEER Monitoring. Please Check https://status.seer.ansrstudio.com")
-                    raise
-                delay = min(base_delay * (2 ** attempt), max_delay)
-                time.sleep(delay)
+                self.replay()
+            except Exception as exc:
+                print(f"Seer auto_replay skipped: {exc}")
 
+        if background_replay:
+            self.start_background_replay()
+
+    def _headers(self, *, idempotency_key: Optional[str] = None) -> Dict[str, str]:
+        headers = {
+            "Authorization": self.api_key,
+            "Content-Type": "application/json",
+        }
+        if idempotency_key:
+            headers["Idempotency-Key"] = idempotency_key
+        return headers
+
+    def _url(self, path: str) -> str:
+        return f"{self.base_url}{path}"
+
+    def _post(
+        self,
+        path: str,
+        payload: Dict[str, Any],
+        *,
+        idempotency_key: Optional[str] = None,
+    ):
+        key = idempotency_key or str(uuid.uuid4())
+        return post_with_backoff(
+            self._url(path),
+            payload,
+            self._headers(idempotency_key=key),
+            timeout=self.timeout,
+            session=self._session,
+        )
+
+    def replay(self, *, max_attempts: int = 5) -> ReplayResult:
+        """Flush the local offline queue to SEER."""
+        return replay_failed_payloads(
+            self.api_key,
+            base_url=self.base_url,
+            max_attempts=max_attempts,
+        )
+
+    def start_background_replay(self) -> None:
+        """Start a daemon thread that periodically flushes the offline queue."""
+        if self._bg_thread is not None and self._bg_thread.is_alive():
+            return
+
+        self._bg_stop.clear()
+
+        def _loop() -> None:
+            while not self._bg_stop.is_set():
+                try:
+                    self.replay()
+                except Exception as exc:
+                    print(f"Seer background_replay error: {exc}")
+                if self._bg_stop.wait(timeout=self.replay_interval):
+                    break
+
+        self._bg_thread = threading.Thread(
+            target=_loop,
+            name="seer-background-replay",
+            daemon=True,
+        )
+        self._bg_thread.start()
+        if not self._atexit_registered:
+            atexit.register(self.stop_background_replay)
+            self._atexit_registered = True
+
+    def stop_background_replay(self, timeout: float = 2.0) -> None:
+        """Stop the background flusher if it is running."""
+        self._bg_stop.set()
+        thread = self._bg_thread
+        if thread is not None and thread.is_alive() and thread is not threading.current_thread():
+            thread.join(timeout=timeout)
+        self._bg_thread = None
 
     @contextmanager
-    def monitor(self,job_name, capture_logs=False,metadata:dict =None):
-        start_time = datetime.now(timezone.utc).isoformat(sep=' ')
+    def monitor(
+        self,
+        job_name: str,
+        capture_logs: bool = False,
+        metadata: Optional[dict] = None,
+        tags: Optional[List[str]] = None,
+    ) -> Iterator[None]:
+        start_time = datetime.now(timezone.utc).isoformat(sep=" ")
         status = "success"
         error = None
         log_stream = None
         log_contents = None
         handler = None
         run_id = None
-        monitoring_payload_saved = False
-        seer_ready = True
-        payload={
+        original_stdout = None
+        logger = None
+        previous_level = None
+        user_failed = False
+
+        start_payload = {
             "job_name": job_name,
             "status": "running",
             "run_id": "",
             "start_time": start_time,
-            "end_time": None ,
+            "end_time": None,
             "metadata": metadata,
-            "error_details": error,
-            "tags": None,
-            "logs": log_contents
+            "error_details": None,
+            "tags": tags,
+            "logs": None,
         }
-        headers = {
-            "Authorization": getattr(self, "api_key", None),
-            "Content-Type": "application/json"
-        }
+
         try:
-            id_response = self.post_with_backoff("https://api.ansrstudio.com/monitoring", payload,headers, max_retries=5, base_delay=1, max_delay=30)
-            id_response_dict = json.loads(id_response.json())
+            id_response = self._post("/monitoring", start_payload)
+            id_response_dict = parse_json_response(id_response)
             run_id = id_response_dict.get("run_id")
-            if seer_ready:
-                print('✓ Connected to SEER monitoring') 
-                print(f'✓ Pipeline "{job_name}" registered')
-        except Exception as e:
-            print(e)
-            save_failed_payload(payload, "monitoring") 
-            monitoring_payload_saved = True
-            seer_ready = False
+            print("✓ Connected to SEER monitoring")
+            print(f'✓ Pipeline "{job_name}" registered')
+        except Exception as exc:
+            # Do not queue the running stub; we persist the final outcome below.
+            print(exc)
+            print("Seer unavailable at start; will queue final result if needed.")
+
         if capture_logs:
             log_stream = StringIO()
             original_stdout = sys.stdout
             sys.stdout = StreamTee(sys.stdout, log_stream)
 
-            # Hook up logging to the same buffer
             handler = logging.StreamHandler(log_stream)
             logger = logging.getLogger()
+            previous_level = logger.level
             logger.setLevel(logging.DEBUG)
-            logger.handlers = []
             logger.addHandler(handler)
-            if seer_ready:
-                print('✓ Capturing Logs')
+            if run_id:
+                print("✓ Capturing Logs")
+
         try:
-            if seer_ready:
-                print('→ Monitoring active.') 
-            print('Starting Code...')
-            yield  # This is where the user's code runs
-        except Exception as e:
+            if run_id:
+                print("→ Monitoring active.")
+            print("Starting Code...")
+            yield
+        except Exception:
             status = "failed"
             error = traceback.format_exc()
-            raise  # re-raises the error so the script fails visibly
+            user_failed = True
+            raise
         finally:
-            if capture_logs:
+            if capture_logs and original_stdout is not None:
                 sys.stdout = original_stdout
-            end_time = datetime.now(timezone.utc).isoformat(sep=' ')
-            if capture_logs and handler:
+            if capture_logs and handler is not None and logger is not None:
                 handler.flush()
                 logger.removeHandler(handler)
-                log_contents = log_stream.getvalue()
-            if run_id:
-                payload={
-                    "job_name": job_name,
-                    "status": status,
-                    "run_id": run_id,
-                    "start_time": start_time,
-                    "end_time": end_time ,
-                    "metadata": metadata,
-                    "error_details": error, 
-                    "tags": None,
-                    "logs": log_contents
-                }
-                try:
-                    self.post_with_backoff("https://api.ansrstudio.com/monitoring", payload,headers, max_retries=5, base_delay=1, max_delay=30)
-                    print('✓ Monitoring complete.')
-                except Exception as e:
-                    save_failed_payload(payload, "monitoring")
-                    raise 
-            else:
-                if not monitoring_payload_saved:
-                    save_failed_payload(payload, "monitoring") 
-                print("Seer unable to start.")            
+                handler.close()
+                if previous_level is not None:
+                    logger.setLevel(previous_level)
+                if log_stream is not None:
+                    log_contents = log_stream.getvalue()
 
-    def heartbeat(self,job_name,metadata=None):
-        current_time = datetime.now(timezone.utc).isoformat(sep=' ')
-        payload={
+            end_time = datetime.now(timezone.utc).isoformat(sep=" ")
+            final_payload = {
+                "job_name": job_name,
+                "status": status,
+                "run_id": run_id or "",
+                "start_time": start_time,
+                "end_time": end_time,
+                "metadata": metadata,
+                "error_details": error,
+                "tags": tags,
+                "logs": log_contents,
+            }
+
+            if run_id:
+                idem_key = str(uuid.uuid4())
+                try:
+                    self._post("/monitoring", final_payload, idempotency_key=idem_key)
+                    print("✓ Monitoring complete.")
+                except Exception as exc:
+                    save_failed_payload(
+                        final_payload,
+                        "monitoring",
+                        idempotency_key=idem_key,
+                        base_url=self.base_url,
+                    )
+                    # Never raise from finally — that would mask a user exception
+                    # and should not fail the job because monitoring is down.
+                    if not user_failed:
+                        print(f"Seer completion upload failed; queued for replay: {exc}")
+            else:
+                save_failed_payload(
+                    final_payload,
+                    "monitoring",
+                    idempotency_key=str(uuid.uuid4()),
+                    base_url=self.base_url,
+                )
+                print("Seer unable to start; final result queued for replay.")
+
+    def heartbeat(
+        self,
+        job_name: str,
+        metadata: Optional[dict] = None,
+        tags: Optional[List[str]] = None,
+    ) -> None:
+        current_time = datetime.now(timezone.utc).isoformat(sep=" ")
+        payload = {
             "job_name": job_name,
             "current_time": current_time,
-            "metadata": metadata
+            "metadata": metadata,
+            "tags": tags,
         }
-        headers = {
-            "Authorization": getattr(self, "api_key", None),
-            "Content-Type": "application/json"
-        }
+        idem_key = str(uuid.uuid4())
         try:
-            self.post_with_backoff("https://api.ansrstudio.com/heartbeat", payload,headers, max_retries=5, base_delay=1, max_delay=30)
-            print('Heartbeat recived')
-        except Exception as e:
-            save_failed_payload(payload, "heartbeat")
-	
+            self._post("/heartbeat", payload, idempotency_key=idem_key)
+            print("Heartbeat received")
+        except Exception:
+            save_failed_payload(
+                payload,
+                "heartbeat",
+                idempotency_key=idem_key,
+                base_url=self.base_url,
+            )

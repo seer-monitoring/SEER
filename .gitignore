@@ -1,0 +1,40 @@
+# Build / packaging
+dist/
+build/
+*.egg-info/
+*.egg
+.eggs/
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+.venv/
+venv/
+env/
+.env
+.env.*
+
+# Seer local queue (never commit)
+.seer/
+**/failed_payloads/
+
+# Tests / tooling
+.pytest_cache/
+.coverage
+htmlcov/
+.mypy_cache/
+.ruff_cache/
+
+# IDE / OS
+.idea/
+.vscode/
+*.swp
+.DS_Store
+Thumbs.db
+
+# Local scratch / secrets
+seerpy/from seerpy import Seer.py
+seerpy/import requests.py
