@@ -1,0 +1,7 @@
+data/
+*.db
+*.db-*
+seer-server
+seer-server.exe
+.git
+README.md

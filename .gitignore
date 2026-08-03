@@ -17,9 +17,14 @@ env/
 .env
 .env.*
 
-# Seer local queue (never commit)
+# Seer local queue / runtime data (never commit)
 .seer/
 **/failed_payloads/
+server/data/
+*.db
+*.db-journal
+*.db-wal
+*.db-shm
 
 # Tests / tooling
 .pytest_cache/
@@ -27,6 +32,14 @@ env/
 htmlcov/
 .mypy_cache/
 .ruff_cache/
+
+# Go
+bin/
+cli/seer
+cli/seer.exe
+cli/builds/
+server/seer-server
+server/seer-server.exe
 
 # IDE / OS
 .idea/
@@ -36,5 +49,5 @@ htmlcov/
 Thumbs.db
 
 # Local scratch / secrets
-seerpy/from seerpy import Seer.py
-seerpy/import requests.py
+**/from seerpy import Seer.py
+**/import requests.py
