@@ -2,7 +2,7 @@
 <section class="page-head">
   <div>
     <h1>Alert channels</h1>
-    <p class="sub">Slack webhooks and email recipients (SMTP from env). Env webhook/SMTP still apply globally.</p>
+    <p class="sub">Generic JSON webhooks and email recipients. Env <code>SEER_WEBHOOK_URL</code> / <code>SEER_SMTP_*</code> also apply globally.</p>
   </div>
   <div class="actions">
     <button type="button" class="btn ghost" data-refresh>Refresh</button>
@@ -15,13 +15,13 @@
     <label>
       Type
       <select name="type">
-        <option value="slack">Slack webhook</option>
+        <option value="webhook">Webhook</option>
         <option value="email">Email</option>
       </select>
     </label>
-    <label id="cfg-slack-label">
+    <label id="cfg-webhook-label">
       Webhook URL
-      <input type="url" name="webhook_url" placeholder="https://hooks.slack.com/..." />
+      <input type="url" name="url" placeholder="https://example.com/hooks/seer" />
     </label>
     <label id="cfg-email-label" hidden>
       To

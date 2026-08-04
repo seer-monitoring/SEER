@@ -8,6 +8,7 @@ import (
 	"net/http/httptest"
 	"path/filepath"
 	"strconv"
+	"strings"
 	"testing"
 	"time"
 
@@ -149,12 +150,50 @@ func TestUIJobsPatchAndChannels(t *testing.T) {
 	}
 
 	status, body = apiReq(t, app, http.MethodPost, "/api/ui/channels", cookie,
-		`{"type":"slack","enabled":true,"config":{"webhook_url":"https://hooks.example/x"}}`)
+		`{"type":"webhook","enabled":true,"config":{"url":"https://hooks.example/x"}}`)
 	if status != 201 {
 		t.Fatalf("create channel status=%d body=%v", status, body)
 	}
 	ch, _ := body["channel"].(map[string]any)
+	if ch["type"] != "webhook" {
+		t.Fatalf("type=%v", ch["type"])
+	}
 	id := int(ch["id"].(float64))
+
+	// Legacy Slack create should normalize to webhook + url key.
+	status, body = apiReq(t, app, http.MethodPost, "/api/ui/channels", cookie,
+		`{"type":"slack","enabled":true,"config":{"webhook_url":"https://hooks.example/legacy"}}`)
+	if status != 201 {
+		t.Fatalf("legacy create status=%d body=%v", status, body)
+	}
+	legacy, _ := body["channel"].(map[string]any)
+	if legacy["type"] != "webhook" {
+		t.Fatalf("legacy type=%v", legacy["type"])
+	}
+	if cfg, _ := legacy["config"].(string); !strings.Contains(cfg, `"url"`) || strings.Contains(cfg, "webhook_url") {
+		t.Fatalf("legacy config=%v", legacy["config"])
+	}
+	legacyID := int(legacy["id"].(float64))
+
+	// Seed a raw slack row and ensure list migrates it.
+	if err := h.DB.Create(&models.AlertChannel{
+		Type:       "slack",
+		ConfigJSON: `{"webhook_url":"https://hooks.example/db"}`,
+		Enabled:    true,
+	}).Error; err != nil {
+		t.Fatalf("seed slack: %v", err)
+	}
+	status, body = apiReq(t, app, http.MethodGet, "/api/ui/channels", cookie, "")
+	if status != 200 {
+		t.Fatalf("list channels status=%d body=%v", status, body)
+	}
+	listed, _ := body["channels"].([]any)
+	for _, raw := range listed {
+		row, _ := raw.(map[string]any)
+		if row["type"] == "slack" {
+			t.Fatalf("list still returned slack: %v", row)
+		}
+	}
 
 	status, body = apiReq(t, app, http.MethodPatch, "/api/ui/channels/"+strconv.Itoa(id), cookie, `{"enabled":false}`)
 	if status != 200 {
@@ -169,6 +208,7 @@ func TestUIJobsPatchAndChannels(t *testing.T) {
 	if status != 200 {
 		t.Fatalf("delete status=%d body=%v", status, body)
 	}
+	_, _ = apiReq(t, app, http.MethodDelete, "/api/ui/channels/"+strconv.Itoa(legacyID), cookie, "")
 
 	status, body = apiReq(t, app, http.MethodPost, "/api/ui/check_heartbeat", cookie, "")
 	if status != 200 {

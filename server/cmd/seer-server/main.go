@@ -76,6 +76,9 @@ func main() {
 
 	go func() {
 		log.Printf("seer-server CE listening on %s (db=%s)", cfg.HTTPAddr, cfg.DBPath)
+		if cfg.WebhookURL == "" && (cfg.SMTPHost == "" || cfg.SMTPTo == "") {
+			log.Printf("alerts: no SEER_WEBHOOK_URL or SEER_SMTP_* set — add channels in /ui/channels or set env to receive notifications")
+		}
 		if err := app.Listen(cfg.HTTPAddr); err != nil {
 			log.Fatalf("listen: %v", err)
 		}

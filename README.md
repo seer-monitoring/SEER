@@ -4,7 +4,7 @@
 
 Generic cron pings disappear when the network flaps, then fire false **missed / failed** alerts. **SEER** is different: it persists outcomes locally with atomic writes, keeps your process exit code intact, and delivers the real result when connectivity returns — no false positives from a blip.
 
-**Cloud:** [seer.ansrstudio.com](https://seer.ansrstudio.com) — dashboard, API keys, pipelines, managed Slack/email  
+**Cloud:** [seer.ansrstudio.com](https://seer.ansrstudio.com) — dashboard, API keys, pipelines, managed Webooks/email  
 **This repo:** Python SDK · CLI · Community Edition self-host server (+ embedded ops UI)
 
 ```python
@@ -22,12 +22,12 @@ seer run daily_etl -- python etl.py   # any language via CLI
 
 ## Why not a generic ping?
 
-| Generic “I’m alive” ping | SEER |
-| ------------------------ | ---- |
-| Silence = failure (noisy) | Silence = wait; outcome is queued |
-| Network flap → false alert | Atomic offline queue → replay |
-| Often drops mid-run context | Full lifecycle: running → success/failed + logs |
-| Monitoring outage can fail the job | Your exit code / exception always wins |
+| Generic “I’m alive” ping           | SEER                                            |
+| ---------------------------------- | ----------------------------------------------- |
+| Silence = failure (noisy)          | Silence = wait; outcome is queued               |
+| Network flap → false alert         | Atomic offline queue → replay                   |
+| Often drops mid-run context        | Full lifecycle: running → success/failed + logs |
+| Monitoring outage can fail the job | Your exit code / exception always wins          |
 
 ---
 
@@ -112,8 +112,8 @@ Point at self-host with `SEER_BASE_URL=http://127.0.0.1:8080` (or `base_url=` in
 
 ### Hosted — [seer.ansrstudio.com](https://seer.ansrstudio.com)
 
-1. Create an account and a pipeline name  
-2. Copy your API key  
+1. Create an account and a pipeline name
+2. Copy your API key
 3. Use the SDK/CLI with the default API host (`https://api.ansrstudio.com`)
 
 ### Self-hosted Community Edition
@@ -123,21 +123,21 @@ cd server && export SEER_API_KEYS=dev-key && go run ./cmd/seer-server
 # UI → http://localhost:8080/ui/login  (key: dev-key)
 ```
 
-Jobs auto-create on first event. Slack webhook + SMTP, per-job notify flags, heartbeat miss checks, and `/ui` ship in one binary.
+Jobs auto-create on first event. Generic webhook + SMTP, per-job notify flags, heartbeat miss checks, and `/ui` ship in one binary.
 
 ---
 
 ## Community vs Enterprise
 
-| | **Community** (this repo) | **Enterprise / Cloud** |
-| - | ------------------------- | ---------------------- |
-| Agents | seerpy + CLI, offline queue, Celery | Same agents against managed API |
-| Ingest | Self-host Go CE + SQLite | Hosted at [seer.ansrstudio.com](https://seer.ansrstudio.com) |
-| UI | Embedded `/ui` ops console | Full product dashboard |
-| Alerts | Slack webhook + SMTP | Managed channels + routing |
-| Auth / teams | Shared API keys | RBAC, Okta / SSO |
-| Incident sync | — | PagerDuty / Datadog (and more) |
-| Compliance | — | SOC 2, VPC / private runners |
+|               | **Community** (this repo)           | **Enterprise / Cloud**                                       |
+| ------------- | ----------------------------------- | ------------------------------------------------------------ |
+| Agents        | seerpy + CLI, offline queue, Celery | Same agents against managed API                              |
+| Ingest        | Self-host Go CE + SQLite            | Hosted at [seer.ansrstudio.com](https://seer.ansrstudio.com) |
+| UI            | Embedded `/ui` ops console          | Full product dashboard                                       |
+| Alerts        | Generic webhook + SMTP              | Managed channels + routing                                   |
+| Auth / teams  | Shared API keys                     | RBAC, Okta / SSO                                             |
+| Incident sync | —                                   | PagerDuty / Datadog (and more)                               |
+| Compliance    | —                                   | SOC 2, VPC / private runners                                 |
 
 CE `/enterprise/*` returns a stable **402** so clients can detect edition without bundling EE code.
 
@@ -145,11 +145,11 @@ CE `/enterprise/*` returns a stable **402** so clients can detect edition withou
 
 ## Monorepo
 
-| Path | Package | Role |
-| ---- | ------- | ---- |
-| [`sdks/python/`](sdks/python/) | **seerpy** | SDK — monitor, heartbeats, queue, Celery |
-| [`cli/`](cli/) | **seer** | Wrap any command; `queue` diagnostics |
-| [`server/`](server/) | **seer-server** | CE ingest + alerts + UI |
+| Path                           | Package         | Role                                     |
+| ------------------------------ | --------------- | ---------------------------------------- |
+| [`sdks/python/`](sdks/python/) | **seerpy**      | SDK — monitor, heartbeats, queue, Celery |
+| [`cli/`](cli/)                 | **seer**        | Wrap any command; `queue` diagnostics    |
+| [`server/`](server/)           | **seer-server** | CE ingest + alerts + UI                  |
 
 ---
 
@@ -163,10 +163,12 @@ Paste into Cursor (or any coding agent) to stand up and verify the full local st
 Work in this monorepo. Start Community Edition, exercise CLI + Python against it, confirm UI. Do not commit unless asked.
 
 ## Prerequisites
+
 - Go 1.22+, Python 3.10+
 - Repo root contains `cli/`, `sdks/python/`, `server/`
 
 ## 1) Start CE server (background)
+
 ```powershell
 cd server
 $env:SEER_API_KEYS = "dev-key"
@@ -175,9 +177,11 @@ $env:SEER_HTTP_ADDR = ":8080"
 $env:SEER_NOTIFY_ON_FAILURE = "true"
 go run ./cmd/seer-server
 ```
+
 Wait for listen/UI logs. Check: `Invoke-RestMethod http://127.0.0.1:8080/health`
 
 ## 2) CLI jobs
+
 ```powershell
 cd cli
 go build -o seer.exe .
@@ -193,6 +197,7 @@ New-Item -ItemType Directory -Force -Path $env:SEER_QUEUE_DIR | Out-Null
 ```
 
 ## 3) Python + tests
+
 ```powershell
 cd sdks/python
 pip install -e ".[dev,celery]" -q
@@ -206,18 +211,22 @@ python -m pytest tests/ -q
 ```
 
 ## 4) Server tests
+
 ```powershell
 cd server
 go test ./...
 ```
 
 ## 5) UI
+
 Open http://127.0.0.1:8080/ui/login — key `dev-key`. Confirm demo jobs/runs.
 
 ## Cloud
+
 https://seer.ansrstudio.com — use dashboard API key; omit SEER_BASE_URL (defaults to https://api.ansrstudio.com). Cloud jobs must exist in the dashboard; CE auto-creates.
 
 ## Success
+
 - health ok · CLI exit codes preserved · pytest + `go test` green · UI shows jobs
 ````
 

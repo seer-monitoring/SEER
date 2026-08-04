@@ -151,7 +151,7 @@
       const data = await api("/api/ui/channels");
       const channels = data.channels || [];
       if (!channels.length) {
-        root.innerHTML = `<div class="empty">No channels yet. Add a Slack webhook or email recipient above.</div>`;
+        root.innerHTML = `<div class="empty">No channels yet. Add a webhook URL or email recipient above.</div>`;
         return;
       }
       root.innerHTML = `<table class="data"><thead><tr>
@@ -236,12 +236,12 @@
     if (p === "channels") {
       loadChannels();
       const typeSel = $('select[name="type"]');
-      const slackLabel = $("#cfg-slack-label");
+      const webhookLabel = $("#cfg-webhook-label");
       const emailLabel = $("#cfg-email-label");
       const syncType = () => {
-        const slack = typeSel && typeSel.value === "slack";
-        if (slackLabel) slackLabel.hidden = !slack;
-        if (emailLabel) emailLabel.hidden = slack;
+        const isWebhook = !typeSel || typeSel.value === "webhook";
+        if (webhookLabel) webhookLabel.hidden = !isWebhook;
+        if (emailLabel) emailLabel.hidden = isWebhook;
       };
       if (typeSel) typeSel.addEventListener("change", syncType);
       syncType();
@@ -250,8 +250,8 @@
         form.addEventListener("submit", async (ev) => {
           ev.preventDefault();
           const type = form.type.value;
-          const config = type === "slack"
-            ? { webhook_url: form.webhook_url.value.trim() }
+          const config = type === "webhook"
+            ? { url: form.url.value.trim() }
             : { to: form.to.value.trim() };
           try {
             await api("/api/ui/channels", {

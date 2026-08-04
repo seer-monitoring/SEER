@@ -10,7 +10,7 @@ type Config struct {
 	HTTPAddr                  string
 	DBPath                    string
 	APIKeys                   []string
-	SlackWebhookURL           string
+	WebhookURL                string
 	SMTPHost                  string
 	SMTPPort                  int
 	SMTPUser                  string
@@ -28,10 +28,15 @@ type Config struct {
 }
 
 func Load() Config {
+	webhook := strings.TrimSpace(os.Getenv("SEER_WEBHOOK_URL"))
+	if webhook == "" {
+		// Back-compat with earlier Slack-only env name.
+		webhook = strings.TrimSpace(os.Getenv("SEER_SLACK_WEBHOOK_URL"))
+	}
 	cfg := Config{
 		HTTPAddr:                  envOr("SEER_HTTP_ADDR", ":8080"),
 		DBPath:                    envOr("SEER_DB_PATH", "data/seer.db"),
-		SlackWebhookURL:           strings.TrimSpace(os.Getenv("SEER_SLACK_WEBHOOK_URL")),
+		WebhookURL:                webhook,
 		SMTPHost:                  strings.TrimSpace(os.Getenv("SEER_SMTP_HOST")),
 		SMTPPort:                  envInt("SEER_SMTP_PORT", 587),
 		SMTPUser:                  os.Getenv("SEER_SMTP_USER"),

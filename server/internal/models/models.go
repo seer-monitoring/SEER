@@ -45,7 +45,7 @@ type Heartbeat struct {
 
 type AlertChannel struct {
 	ID         uint      `gorm:"primaryKey" json:"id"`
-	Type       string    `gorm:"size:32;not null;index" json:"type"` // slack | email
+	Type       string    `gorm:"size:32;not null;index" json:"type"` // webhook | email
 	ConfigJSON string    `gorm:"type:text" json:"config"`
 	Enabled    bool      `gorm:"not null;default:true" json:"enabled"`
 	CreatedAt  time.Time `json:"created_at"`

@@ -205,7 +205,7 @@ Or wire all tasks via signals: `connect_seer_signals(seer)`.
 
 See `examples/celery_demo.py`.
 
-Community Edition backends already support Slack webhooks + SMTP email; PagerDuty/Opsgenie/Datadog sync remain Enterprise.
+Community Edition backends already support generic JSON webhooks + SMTP email; PagerDuty/Opsgenie/Datadog sync remain Enterprise.
 
 ---
 

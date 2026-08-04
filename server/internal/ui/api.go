@@ -168,7 +168,45 @@ func (h *Handler) ListChannels(c *fiber.Ctx) error {
 	if err := h.DB.Order("id asc").Find(&channels).Error; err != nil {
 		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": err.Error()})
 	}
+	// Migrate legacy Slack channel rows to generic webhook.
+	for i := range channels {
+		ch := &channels[i]
+		if strings.EqualFold(ch.Type, "slack") {
+			ch.Type = "webhook"
+			cfg := normalizeWebhookConfigJSON(ch.ConfigJSON)
+			_ = h.DB.Model(ch).Updates(map[string]any{"type": "webhook", "config_json": cfg}).Error
+			ch.ConfigJSON = cfg
+		} else if strings.EqualFold(ch.Type, "webhook") {
+			cfg := normalizeWebhookConfigJSON(ch.ConfigJSON)
+			if cfg != ch.ConfigJSON {
+				_ = h.DB.Model(ch).Update("config_json", cfg).Error
+				ch.ConfigJSON = cfg
+			}
+		}
+	}
 	return c.JSON(fiber.Map{"channels": channels})
+}
+
+func normalizeWebhookConfigJSON(raw string) string {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return "{}"
+	}
+	var m map[string]any
+	if err := json.Unmarshal([]byte(raw), &m); err != nil {
+		return raw
+	}
+	if _, ok := m["url"]; !ok {
+		if wu, ok := m["webhook_url"]; ok {
+			m["url"] = wu
+			delete(m, "webhook_url")
+		}
+	}
+	b, err := json.Marshal(m)
+	if err != nil {
+		return raw
+	}
+	return string(b)
 }
 
 type channelRequest struct {
@@ -183,8 +221,11 @@ func (h *Handler) CreateChannel(c *fiber.Ctx) error {
 		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "invalid json"})
 	}
 	typ := strings.ToLower(strings.TrimSpace(req.Type))
-	if typ != "slack" && typ != "email" {
-		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "type must be slack or email"})
+	if typ == "slack" {
+		typ = "webhook"
+	}
+	if typ != "webhook" && typ != "email" {
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "type must be webhook or email"})
 	}
 	cfg := strings.TrimSpace(string(req.Config))
 	if cfg == "" || cfg == "null" {
@@ -192,6 +233,9 @@ func (h *Handler) CreateChannel(c *fiber.Ctx) error {
 	}
 	if !json.Valid([]byte(cfg)) {
 		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "config must be JSON object"})
+	}
+	if typ == "webhook" {
+		cfg = normalizeWebhookConfigJSON(cfg)
 	}
 	enabled := true
 	if req.Enabled != nil {
@@ -223,8 +267,11 @@ func (h *Handler) PatchChannel(c *fiber.Ctx) error {
 	updates := map[string]any{}
 	if req.Type != "" {
 		typ := strings.ToLower(strings.TrimSpace(req.Type))
-		if typ != "slack" && typ != "email" {
-			return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "type must be slack or email"})
+		if typ == "slack" {
+			typ = "webhook"
+		}
+		if typ != "webhook" && typ != "email" {
+			return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "type must be webhook or email"})
 		}
 		updates["type"] = typ
 	}
@@ -235,7 +282,15 @@ func (h *Handler) PatchChannel(c *fiber.Ctx) error {
 		if !json.Valid(req.Config) {
 			return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "config must be JSON"})
 		}
-		updates["config_json"] = string(req.Config)
+		cfg := string(req.Config)
+		typ := ch.Type
+		if v, ok := updates["type"].(string); ok {
+			typ = v
+		}
+		if strings.EqualFold(typ, "webhook") {
+			cfg = normalizeWebhookConfigJSON(cfg)
+		}
+		updates["config_json"] = cfg
 	}
 	if len(updates) == 0 {
 		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "no fields to update"})
