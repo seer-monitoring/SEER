@@ -4,8 +4,33 @@
 
 Generic cron pings disappear when the network flaps, then fire false **missed / failed** alerts. **SEER** is different: it persists outcomes locally with atomic writes, keeps your process exit code intact, and delivers the real result when connectivity returns — no false positives from a blip.
 
-**Cloud:** [seer.ansrstudio.com](https://seer.ansrstudio.com) — dashboard, API keys, pipelines, managed Webooks/email  
+**Cloud:** [seer.ansrstudio.com](https://seer.ansrstudio.com) — dashboard, API keys, pipelines, managed webhooks/email  
 **This repo:** Python SDK · CLI · Community Edition self-host server (+ embedded ops UI)
+
+## Quickstart
+
+**CLI (any command)**
+
+```bash
+export SEER_API_KEY=your_key
+go build -C cli -o seer . && ./seer run daily_etl -- python etl.py
+# self-host: export SEER_BASE_URL=http://127.0.0.1:8080
+```
+
+**CE Fiber server**
+
+```bash
+export SEER_API_KEYS=dev-key
+go run -C server ./cmd/seer-server
+# UI http://127.0.0.1:8080/ui  ·  health http://127.0.0.1:8080/health
+```
+
+**Docker Compose**
+
+```bash
+export SEER_API_KEYS=dev-key
+docker compose up --build
+```
 
 ```python
 # One-liners that ship to production
@@ -108,6 +133,46 @@ Point at self-host with `SEER_BASE_URL=http://127.0.0.1:8080` (or `base_url=` in
 
 ---
 
+## Environment variables
+
+### Clients (CLI + seerpy)
+
+| Variable | Purpose | Default |
+| -------- | ------- | ------- |
+| `SEER_API_KEY` | API key (required for agents) | — |
+| `SEER_BASE_URL` | API host | `https://api.ansrstudio.com` |
+| `SEER_QUEUE_DIR` | Offline queue directory | `~/.seer/queue` |
+| `SEER_QUEUE_MAX_FILES` | Max queued envelopes (FIFO eviction) | `500` |
+| `SEER_QUEUE_MAX_BYTES` | Max queue size in bytes | `52428800` (50 MiB) |
+| `SEER_TIMEOUT` | HTTP timeout seconds (CLI) | `30` |
+| `SEER_REPLAY_JITTER_MS` | Max startup jitter before auto-replay | `2000` |
+
+### CE server (`seer-server`)
+
+| Variable | Purpose | Default |
+| -------- | ------- | ------- |
+| `SEER_PORT` | Listen port shortcut (`8080` → `:8080`) | `8080` via `SEER_HTTP_ADDR` |
+| `SEER_HTTP_ADDR` | Full listen address (wins over `SEER_PORT`) | `:8080` |
+| `SEER_DB_PATH` | SQLite database path | `data/seer.db` |
+| `SEER_API_KEYS` | Comma-separated ingest/UI keys (or `SEER_API_KEY`) | — |
+| `SEER_UI_ENABLED` | Serve embedded `/ui` | `true` |
+| `SEER_UI_SECRET` | Cookie signing secret | derived from API keys |
+| `SEER_WEBHOOK_URL` | Global JSON webhook (`SEER_SLACK_WEBHOOK_URL` still accepted) | — |
+| `SEER_SMTP_HOST` | SMTP host (STARTTLS on 587; TLS on 465) | — |
+| `SEER_SMTP_PORT` | SMTP port | `587` |
+| `SEER_SMTP_USER` / `SEER_SMTP_PASS` | SMTP auth | — |
+| `SEER_SMTP_FROM` / `SEER_SMTP_TO` | Envelope from / global recipient | from←user |
+| `SEER_NOTIFY_ON_START` | Default job: alert on start | `false` |
+| `SEER_NOTIFY_ON_SUCCESS` | Default job: alert on success | `false` |
+| `SEER_NOTIFY_ON_FAILURE` | Default job: alert on failed/cancelled | `true` |
+| `SEER_NOTIFY_ON_HEARTBEAT_MISSED` | Default job: alert on stale heartbeat | `true` |
+| `SEER_HEARTBEAT_STALE_AFTER` | Seconds without heartbeat before miss | `300` |
+| `SEER_HEARTBEAT_CHECK_INTERVAL` | In-process miss scan interval (`0` = off) | `0` |
+
+Health: `GET /health` → `{"status":"ok","edition":"community","version":"<build>"}`.
+
+---
+
 ## Choose your path
 
 ### Hosted — [seer.ansrstudio.com](https://seer.ansrstudio.com)
@@ -119,7 +184,8 @@ Point at self-host with `SEER_BASE_URL=http://127.0.0.1:8080` (or `base_url=` in
 ### Self-hosted Community Edition
 
 ```bash
-cd server && export SEER_API_KEYS=dev-key && go run ./cmd/seer-server
+export SEER_API_KEYS=dev-key && go run -C server ./cmd/seer-server
+# or: docker compose up --build
 # UI → http://localhost:8080/ui/login  (key: dev-key)
 ```
 
@@ -235,8 +301,9 @@ https://seer.ansrstudio.com — use dashboard API key; omit SEER_BASE_URL (defau
 ## CI
 
 - `python-sdk.yml` — test + PyPI (`sdks/python`)
-- `cli.yml` — Go test + binaries (`cli`)
-- `server.yml` — Go test/build + GHCR (`server`)
+- `cli.yml` — Go test + binaries (`cli`); tag `cli-v*` for legacy GH release
+- `server.yml` — Go test/build + GHCR (`server`); tag `server-v*` for image
+- `release.yml` — GoReleaser cross-platform CLI + server archives on `v*` tags
 
 ---
 

@@ -15,6 +15,9 @@ import (
 	"github.com/google/uuid"
 )
 
+// Set via -ldflags "-X main.version=v1.2.3" (GoReleaser).
+var version = "0.2.4"
+
 func main() {
 	if len(os.Args) < 2 {
 		usage()
@@ -33,7 +36,7 @@ func main() {
 	case "help", "-h", "--help":
 		usage()
 	case "version", "--version":
-		fmt.Println("seer-cli 0.2.4")
+		fmt.Printf("seer-cli %s\n", version)
 	default:
 		usage()
 		os.Exit(1)

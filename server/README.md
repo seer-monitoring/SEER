@@ -8,8 +8,25 @@ Lightweight Go ingest server for Seer monitoring telemetry.
 - Generic JSON webhook + SMTP alerts (start / success / failure / cancelled / heartbeat miss)
 - Heartbeat staleness check via `GET /check_heartbeat` or optional in-process ticker
 - `/enterprise/*` paywall stubs for EE features
+- Distroless Docker image + Compose; GoReleaser binaries on tag
 
-## Run locally
+## Quickstart
+
+```bash
+export SEER_API_KEYS=dev-key
+go run ./cmd/seer-server
+# → http://127.0.0.1:8080/ui  ·  GET /health
+```
+
+```bash
+# from repo root
+export SEER_API_KEYS=dev-key
+docker compose up --build
+```
+
+Open the UI: [http://localhost:8080/ui](http://localhost:8080/ui) and sign in with `dev-key` (any key from `SEER_API_KEYS`).
+
+## Run locally (alerts)
 
 ```bash
 export SEER_API_KEYS=dev-key
@@ -25,8 +42,6 @@ export SEER_SMTP_TO=ops@example.com
 go run ./cmd/seer-server
 ```
 
-Open the UI: [http://localhost:8080/ui](http://localhost:8080/ui) and sign in with `dev-key` (any key from `SEER_API_KEYS`).
-
 Webhook POSTs JSON like:
 
 ```json
@@ -40,6 +55,8 @@ Webhook POSTs JSON like:
   "text": "Pipeline: daily_etl\nStatus: failed\n..."
 }
 ```
+
+Discord webhook URLs are auto-adapted (`content` field). Extra UI channels fan out in addition to `SEER_WEBHOOK_URL` / `SEER_SMTP_TO`.
 
 ## Ops UI
 
@@ -71,6 +88,7 @@ Jobs are auto-created on first event. Notification flags and stale interval are 
 
 | Variable | Purpose |
 | -------- | ------- |
+| `SEER_PORT` | Port shortcut (`8080` → `:8080`; overridden by `SEER_HTTP_ADDR`) |
 | `SEER_HTTP_ADDR` | Listen address (default `:8080`) |
 | `SEER_DB_PATH` | SQLite path (default `data/seer.db`) |
 | `SEER_API_KEYS` | Comma-separated API keys (or `SEER_API_KEY`) |
@@ -87,14 +105,40 @@ Jobs are auto-created on first event. Notification flags and stale interval are 
 | `SEER_HEARTBEAT_STALE_AFTER` | Seconds without heartbeat before miss (default `300`) |
 | `SEER_HEARTBEAT_CHECK_INTERVAL` | In-process miss scan interval in seconds (`0` = off, use cron → `/check_heartbeat`) |
 
-## Docker
+## Health
 
 ```bash
-docker build -t seer-server .
+curl -s http://127.0.0.1:8080/health
+# {"status":"ok","edition":"community","version":"dev"}
+```
+
+`version` is injected at build time (`-ldflags` / GoReleaser / Docker `VERSION` build-arg).
+
+## Docker
+
+Multi-stage **distroless** image (see [`Dockerfile`](Dockerfile)). From the monorepo root:
+
+```bash
+export SEER_API_KEYS=dev-key
+# optional alerts:
+# export SEER_WEBHOOK_URL=...
+# export SEER_SMTP_HOST=... SEER_SMTP_PORT=587 SEER_SMTP_USER=... SEER_SMTP_PASS=...
+# export SEER_SMTP_FROM=... SEER_SMTP_TO=...
+docker compose up --build
+```
+
+SQLite persists in the `seer_data` volume at `/data/seer.db`.  
+(Client offline queues use `SEER_QUEUE_DIR` on agents — not the server container.)
+
+Manual build:
+
+```bash
+docker build -t seer-server-ce --build-arg VERSION=v1.0.0 .
 docker run --rm -p 8080:8080 \
   -e SEER_API_KEYS=dev-key \
+  -e SEER_PORT=8080 \
   -v seer-data:/data \
-  seer-server
+  seer-server-ce
 ```
 
 ## Enterprise stubs

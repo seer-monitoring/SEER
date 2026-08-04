@@ -1,0 +1,38 @@
+# SEER Community Edition — from repo root:
+#   export SEER_API_KEYS=dev-key
+#   docker compose up --build
+#
+# Health: GET http://localhost:8080/health
+# UI:     http://localhost:8080/ui
+
+services:
+  seer-server:
+    build:
+      context: ./server
+      args:
+        VERSION: ${SEER_VERSION:-dev}
+    image: seer-server-ce:local
+    container_name: seer-server-ce
+    ports:
+      - "${SEER_PORT:-8080}:8080"
+    environment:
+      SEER_PORT: "8080"
+      SEER_HTTP_ADDR: ":8080"
+      SEER_DB_PATH: /data/seer.db
+      SEER_API_KEYS: ${SEER_API_KEYS:-dev-key}
+      SEER_WEBHOOK_URL: ${SEER_WEBHOOK_URL:-}
+      # Example SMTP (e.g. Ethereal): export SEER_SMTP_HOST=smtp.ethereal.email
+      SEER_SMTP_HOST: ${SEER_SMTP_HOST:-}
+      SEER_SMTP_PORT: ${SEER_SMTP_PORT:-587}
+      SEER_SMTP_USER: ${SEER_SMTP_USER:-}
+      SEER_SMTP_PASS: ${SEER_SMTP_PASS:-}
+      SEER_SMTP_FROM: ${SEER_SMTP_FROM:-}
+      SEER_SMTP_TO: ${SEER_SMTP_TO:-}
+      SEER_NOTIFY_ON_FAILURE: ${SEER_NOTIFY_ON_FAILURE:-true}
+    volumes:
+      # SQLite + server state (client offline queues use SEER_QUEUE_DIR on agents)
+      - seer_data:/data
+    restart: unless-stopped
+
+volumes:
+  seer_data:

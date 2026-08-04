@@ -34,7 +34,10 @@ jobs:
         run: go test ./...
       - name: Build static binary
         run: |
-          CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o seer-server ./cmd/seer-server
+          VERSION="${GITHUB_REF_NAME:-dev}"
+          CGO_ENABLED=0 go build -trimpath \
+            -ldflags="-s -w -X github.com/seer-monitoring/SEER/server/internal/version.Version=${VERSION}" \
+            -o seer-server ./cmd/seer-server
 
   docker:
     needs: test
@@ -64,3 +67,5 @@ jobs:
           push: true
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
+          build-args: |
+            VERSION=${{ github.ref_name }}

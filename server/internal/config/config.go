@@ -34,7 +34,7 @@ func Load() Config {
 		webhook = strings.TrimSpace(os.Getenv("SEER_SLACK_WEBHOOK_URL"))
 	}
 	cfg := Config{
-		HTTPAddr:                  envOr("SEER_HTTP_ADDR", ":8080"),
+		HTTPAddr:                  resolveHTTPAddr(),
 		DBPath:                    envOr("SEER_DB_PATH", "data/seer.db"),
 		WebhookURL:                webhook,
 		SMTPHost:                  strings.TrimSpace(os.Getenv("SEER_SMTP_HOST")),
@@ -65,6 +65,20 @@ func Load() Config {
 		}
 	}
 	return cfg
+}
+
+func resolveHTTPAddr() string {
+	if addr := strings.TrimSpace(os.Getenv("SEER_HTTP_ADDR")); addr != "" {
+		return addr
+	}
+	// SEER_PORT is a convenience alias (e.g. SEER_PORT=8080 → :8080).
+	if port := strings.TrimSpace(os.Getenv("SEER_PORT")); port != "" {
+		if strings.HasPrefix(port, ":") {
+			return port
+		}
+		return ":" + port
+	}
+	return ":8080"
 }
 
 func envOr(name, fallback string) string {

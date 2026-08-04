@@ -40,6 +40,7 @@ cli/seer.exe
 cli/builds/
 server/seer-server
 server/seer-server.exe
+*~
 
 # IDE / OS
 .idea/

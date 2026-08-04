@@ -155,6 +155,20 @@ func TestHealth(t *testing.T) {
 	if resp.StatusCode != 200 {
 		t.Fatalf("status=%d", resp.StatusCode)
 	}
+	var body map[string]any
+	if err := json.NewDecoder(resp.Body).Decode(&body); err != nil {
+		t.Fatal(err)
+	}
+	if body["status"] != "ok" {
+		t.Fatalf("body=%v", body)
+	}
+	if body["edition"] != "community" {
+		t.Fatalf("edition=%v", body["edition"])
+	}
+	ver, _ := body["version"].(string)
+	if ver == "" {
+		t.Fatalf("missing version: %v", body)
+	}
 }
 
 func TestMonitoringRegisterAndComplete(t *testing.T) {

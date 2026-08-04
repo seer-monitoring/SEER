@@ -12,6 +12,7 @@ import (
 
 	"github.com/seer-monitoring/SEER/server/internal/config"
 	"github.com/seer-monitoring/SEER/server/internal/models"
+	"github.com/seer-monitoring/SEER/server/internal/version"
 )
 
 // EventNotifier sends monitoring alerts. Implemented by alerts.Notifier.
@@ -45,7 +46,11 @@ type heartbeatRequest struct {
 }
 
 func (s *Server) Health(c *fiber.Ctx) error {
-	return c.JSON(fiber.Map{"status": "ok", "edition": "community"})
+	return c.JSON(fiber.Map{
+		"status":  "ok",
+		"edition": "community",
+		"version": version.Version,
+	})
 }
 
 func (s *Server) Monitoring(c *fiber.Ctx) error {
