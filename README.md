@@ -135,7 +135,7 @@ Jobs auto-create on first event. Generic webhook + SMTP, per-job notify flags, h
 | Ingest        | Self-host Go CE + SQLite            | Hosted at [seer.ansrstudio.com](https://seer.ansrstudio.com) |
 | UI            | Embedded `/ui` ops console          | Full product dashboard                                       |
 | Alerts        | Generic webhook + SMTP              | Managed channels + routing                                   |
-| Auth / teams  | Shared API keys                     | RBAC, Okta / SSO                                             |
+| Auth / teams  | Shared API keys                     | RBAC, Okta / SSO (Coming Soon)                               |
 | Incident sync | —                                   | PagerDuty / Datadog (Coming Soon)                            |
 | Compliance    | —                                   | VPC (Coming Soon)                                            |
 
