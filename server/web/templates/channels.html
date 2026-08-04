@@ -1,0 +1,38 @@
+{{define "content"}}
+<section class="page-head">
+  <div>
+    <h1>Alert channels</h1>
+    <p class="sub">Slack webhooks and email recipients (SMTP from env). Env webhook/SMTP still apply globally.</p>
+  </div>
+  <div class="actions">
+    <button type="button" class="btn ghost" data-refresh>Refresh</button>
+  </div>
+</section>
+<p id="flash" class="flash" hidden></p>
+<section class="card-panel">
+  <h2>Add channel</h2>
+  <form id="channel-form" class="channel-form">
+    <label>
+      Type
+      <select name="type">
+        <option value="slack">Slack webhook</option>
+        <option value="email">Email</option>
+      </select>
+    </label>
+    <label id="cfg-slack-label">
+      Webhook URL
+      <input type="url" name="webhook_url" placeholder="https://hooks.slack.com/..." />
+    </label>
+    <label id="cfg-email-label" hidden>
+      To
+      <input type="email" name="to" placeholder="ops@example.com" />
+    </label>
+    <label class="check"><input type="checkbox" name="enabled" checked /> Enabled</label>
+    <button type="submit" class="btn primary">Add</button>
+  </form>
+</section>
+<section class="card-panel">
+  <h2>Configured channels</h2>
+  <div id="channels-root"><p class="muted">Loading…</p></div>
+</section>
+{{end}}

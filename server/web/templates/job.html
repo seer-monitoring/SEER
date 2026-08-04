@@ -1,0 +1,37 @@
+{{define "content"}}
+<section class="page-head">
+  <div>
+    <p class="crumb"><a href="/ui/">Jobs</a> / <span id="job-name">{{.JobName}}</span></p>
+    <h1 id="job-title">{{.JobName}}</h1>
+    <p class="sub">Notification settings, heartbeat, and recent runs.</p>
+  </div>
+  <div class="actions">
+    <button type="button" class="btn ghost" data-refresh>Refresh</button>
+  </div>
+</section>
+<p id="flash" class="flash" hidden></p>
+<div class="grid-2">
+  <section class="card-panel" id="settings-panel">
+    <h2>Settings</h2>
+    <form id="job-settings">
+      <label class="check"><input type="checkbox" name="notify_on_start" /> Notify on start</label>
+      <label class="check"><input type="checkbox" name="notify_on_success" /> Notify on success</label>
+      <label class="check"><input type="checkbox" name="notify_on_failure" /> Notify on failure / cancelled</label>
+      <label class="check"><input type="checkbox" name="notify_on_heartbeat_missed" /> Notify on heartbeat miss</label>
+      <label>
+        Heartbeat stale after (seconds)
+        <input type="number" min="1" name="heartbeat_stale_after_sec" />
+      </label>
+      <button type="submit" class="btn primary">Save settings</button>
+    </form>
+  </section>
+  <section class="card-panel" id="heartbeat-panel">
+    <h2>Heartbeat</h2>
+    <p class="muted">Loading…</p>
+  </section>
+</div>
+<section class="card-panel runs-panel">
+  <h2>Recent runs</h2>
+  <div id="runs-root"><p class="muted">Loading…</p></div>
+</section>
+{{end}}

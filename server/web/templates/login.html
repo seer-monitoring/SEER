@@ -1,0 +1,16 @@
+{{define "content"}}
+<section class="login-hero">
+  <p class="eyebrow">Community Edition</p>
+  <h1 class="brand-hero">SEER</h1>
+  <p class="lede">Sign in with a configured API key to browse jobs, runs, and alert channels.</p>
+  {{if .Error}}<p class="flash error">{{.Error}}</p>{{end}}
+  <form class="login-form" method="post" action="/ui/login">
+    <input type="hidden" name="next" value="{{.Next}}" />
+    <label>
+      API key
+      <input type="password" name="api_key" required autocomplete="current-password" placeholder="dev-key" />
+    </label>
+    <button type="submit" class="btn primary">Open console</button>
+  </form>
+</section>
+{{end}}

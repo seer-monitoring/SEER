@@ -1,0 +1,15 @@
+{{define "content"}}
+<section class="page-head">
+  <div>
+    <p class="crumb"><a href="/ui/">Jobs</a> / <a id="run-job-link" href="#">…</a> / run</p>
+    <h1>Run <span class="mono" id="run-id">{{.RunID}}</span></h1>
+  </div>
+  <div class="actions">
+    <button type="button" class="btn ghost" data-refresh>Refresh</button>
+  </div>
+</section>
+<p id="flash" class="flash" hidden></p>
+<div id="run-root" class="card-panel">
+  <p class="muted">Loading…</p>
+</div>
+{{end}}

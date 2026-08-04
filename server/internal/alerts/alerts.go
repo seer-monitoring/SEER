@@ -32,20 +32,36 @@ func New(db *gorm.DB, cfg config.Config) *Notifier {
 	}
 }
 
-// NotifyFailed is best-effort — never returns an error to the caller path.
-func (n *Notifier) NotifyFailed(jobName string, run *models.Run) {
+// Notify is best-effort — never returns an error to the caller path.
+// status is one of: start, success, failed, cancelled, heartbeat.
+func (n *Notifier) Notify(job models.Job, status string, run *models.Run) {
 	defer func() {
 		if r := recover(); r != nil {
 			log.Printf("seer alerts panic: %v", r)
 		}
 	}()
 
+	if !shouldNotify(job, status) {
+		return
+	}
+
+	runID := ""
+	errDetails := ""
+	if run != nil {
+		runID = run.RunID
+		errDetails = run.ErrorDetails
+	}
+
+	displayStatus := status
 	msg := fmt.Sprintf(
-		"Seer alert: job %q failed (run_id=%s)\n%s",
-		jobName,
-		run.RunID,
-		truncate(run.ErrorDetails, 2000),
+		"Pipeline: %s\nStatus: %s\nRun ID: %s\nError Details: %s",
+		job.Name,
+		displayStatus,
+		orNA(runID),
+		orNone(errDetails),
 	)
+
+	subject := fmt.Sprintf("Job %s had a %s event.", job.Name, displayStatus)
 
 	if n.cfg.SlackWebhookURL != "" {
 		if err := n.sendSlack(n.cfg.SlackWebhookURL, msg); err != nil {
@@ -53,7 +69,7 @@ func (n *Notifier) NotifyFailed(jobName string, run *models.Run) {
 		}
 	}
 	if n.cfg.SMTPHost != "" && n.cfg.SMTPTo != "" {
-		if err := n.sendEmail(msg); err != nil {
+		if err := n.sendEmailTo(n.cfg.SMTPTo, subject, msg); err != nil {
 			log.Printf("email alert failed: %v", err)
 		}
 	}
@@ -75,7 +91,6 @@ func (n *Notifier) NotifyFailed(jobName string, run *models.Run) {
 				log.Printf("slack channel alert failed: %v", err)
 			}
 		case "email":
-			// DB email channels reuse global SMTP transport; config may override To.
 			var cfg map[string]string
 			_ = json.Unmarshal([]byte(ch.ConfigJSON), &cfg)
 			to := cfg["to"]
@@ -85,10 +100,25 @@ func (n *Notifier) NotifyFailed(jobName string, run *models.Run) {
 			if n.cfg.SMTPHost == "" || to == "" {
 				continue
 			}
-			if err := n.sendEmailTo(to, msg); err != nil {
+			if err := n.sendEmailTo(to, subject, msg); err != nil {
 				log.Printf("email channel alert failed: %v", err)
 			}
 		}
+	}
+}
+
+func shouldNotify(job models.Job, status string) bool {
+	switch status {
+	case "start":
+		return job.NotifyOnStart
+	case "success":
+		return job.NotifyOnSuccess
+	case "failed", "cancelled":
+		return job.NotifyOnFailure
+	case "heartbeat":
+		return job.NotifyOnHeartbeatMissed
+	default:
+		return false
 	}
 }
 
@@ -105,14 +135,9 @@ func (n *Notifier) sendSlack(webhookURL, text string) error {
 	return nil
 }
 
-func (n *Notifier) sendEmail(text string) error {
-	return n.sendEmailTo(n.cfg.SMTPTo, text)
-}
-
-func (n *Notifier) sendEmailTo(to, text string) error {
+func (n *Notifier) sendEmailTo(to, subject, text string) error {
 	addr := fmt.Sprintf("%s:%d", n.cfg.SMTPHost, n.cfg.SMTPPort)
 	from := n.cfg.SMTPFrom
-	subject := "Seer job failure"
 	msg := []byte("To: " + to + "\r\n" +
 		"From: " + from + "\r\n" +
 		"Subject: " + subject + "\r\n" +
@@ -125,9 +150,19 @@ func (n *Notifier) sendEmailTo(to, text string) error {
 	return smtp.SendMail(addr, auth, from, []string{to}, msg)
 }
 
-func truncate(s string, max int) string {
-	if len(s) <= max {
-		return s
+func orNA(s string) string {
+	if s == "" {
+		return "N/A"
 	}
-	return s[:max] + "…"
+	return s
+}
+
+func orNone(s string) string {
+	if s == "" {
+		return "None"
+	}
+	if len(s) > 2000 {
+		return s[:2000] + "…"
+	}
+	return s
 }

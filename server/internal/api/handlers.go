@@ -2,6 +2,7 @@ package api
 
 import (
 	"encoding/json"
+	"log"
 	"strings"
 	"time"
 
@@ -9,13 +10,19 @@ import (
 	"github.com/google/uuid"
 	"gorm.io/gorm"
 
-	"github.com/seer-monitoring/SEER/server/internal/alerts"
+	"github.com/seer-monitoring/SEER/server/internal/config"
 	"github.com/seer-monitoring/SEER/server/internal/models"
 )
 
+// EventNotifier sends monitoring alerts. Implemented by alerts.Notifier.
+type EventNotifier interface {
+	Notify(job models.Job, status string, run *models.Run)
+}
+
 type Server struct {
 	DB       *gorm.DB
-	Notifier *alerts.Notifier
+	Notifier EventNotifier
+	Cfg      config.Config
 }
 
 type monitoringRequest struct {
@@ -56,7 +63,7 @@ func (s *Server) Monitoring(c *fiber.Ctx) error {
 	}
 
 	idem := strings.TrimSpace(c.Get("Idempotency-Key"))
-	idemBase := strings.TrimSuffix(strings.TrimSuffix(idem, ":register"), ":complete")
+	idemBase := idempotencyBase(idem)
 
 	job, err := s.ensureJob(req.JobName)
 	if err != nil {
@@ -66,7 +73,7 @@ func (s *Server) Monitoring(c *fiber.Ctx) error {
 	switch req.Status {
 	case "running":
 		return s.handleRunning(c, job, req, idemBase)
-	case "success", "failed":
+	case "success", "failed", "cancelled":
 		return s.handleTerminal(c, job, req, idemBase)
 	default:
 		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "unsupported status"})
@@ -74,9 +81,36 @@ func (s *Server) Monitoring(c *fiber.Ctx) error {
 }
 
 func (s *Server) handleRunning(c *fiber.Ctx, job models.Job, req monitoringRequest, idemBase string) error {
+	runID := strings.TrimSpace(req.RunID)
+
+	// Progress update: running + run_id → upsert metadata/logs/tags only, no alert.
+	if runID != "" {
+		var run models.Run
+		err := s.DB.Where("run_id = ? AND job_id = ?", runID, job.ID).First(&run).Error
+		if err == gorm.ErrRecordNotFound {
+			return c.Status(fiber.StatusNotFound).JSON(fiber.Map{"error": "run not found", "run_id": runID})
+		}
+		if err != nil {
+			return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": err.Error()})
+		}
+		if len(req.Metadata) > 0 && string(req.Metadata) != "null" {
+			run.MetadataJSON = string(req.Metadata)
+		}
+		if len(req.Tags) > 0 && string(req.Tags) != "null" {
+			run.TagsJSON = string(req.Tags)
+		}
+		if req.Logs != nil {
+			run.Logs = *req.Logs
+		}
+		if err := s.DB.Save(&run).Error; err != nil {
+			return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": err.Error()})
+		}
+		return c.JSON(fiber.Map{"run_id": run.RunID, "update_status": "Success"})
+	}
+
 	if idemBase != "" {
 		var existing models.Run
-		err := s.DB.Where("idempotency_key = ? AND status = ?", idemBase, "running").First(&existing).Error
+		err := s.DB.Where("job_id = ? AND idempotency_key = ? AND status = ?", job.ID, idemBase, "running").First(&existing).Error
 		if err == nil {
 			return c.JSON(fiber.Map{"run_id": existing.RunID, "status": existing.Status})
 		}
@@ -85,11 +119,7 @@ func (s *Server) handleRunning(c *fiber.Ctx, job models.Job, req monitoringReque
 		}
 	}
 
-	runID := strings.TrimSpace(req.RunID)
-	if runID == "" {
-		runID = uuid.NewString()
-	}
-
+	runID = uuid.NewString()
 	start := parseFlexibleTime(req.StartTime)
 	run := models.Run{
 		JobID:          job.ID,
@@ -100,23 +130,33 @@ func (s *Server) handleRunning(c *fiber.Ctx, job models.Job, req monitoringReque
 		TagsJSON:       rawOrEmpty(req.Tags),
 		IdempotencyKey: idemBase,
 	}
+	if req.Logs != nil {
+		run.Logs = *req.Logs
+	}
 	if err := s.DB.Create(&run).Error; err != nil {
-		// Unique run_id race — return existing
 		var existing models.Run
 		if s.DB.Where("run_id = ?", runID).First(&existing).Error == nil {
 			return c.JSON(fiber.Map{"run_id": existing.RunID, "status": existing.Status})
 		}
 		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": err.Error()})
 	}
+	s.notifyAsync(job, "start", &run)
 	return c.JSON(fiber.Map{"run_id": run.RunID, "status": run.Status})
 }
 
 func (s *Server) handleTerminal(c *fiber.Ctx, job models.Job, req monitoringRequest, idemBase string) error {
 	if idemBase != "" {
 		var existing models.Run
-		err := s.DB.Where("idempotency_key = ? AND status IN ?", idemBase, []string{"success", "failed"}).First(&existing).Error
+		err := s.DB.Where(
+			"job_id = ? AND idempotency_key = ? AND status IN ?",
+			job.ID, idemBase, []string{"success", "failed", "cancelled"},
+		).First(&existing).Error
 		if err == nil {
-			return c.JSON(fiber.Map{"run_id": existing.RunID, "status": existing.Status})
+			return c.JSON(fiber.Map{
+				"run_id":        existing.RunID,
+				"status":        existing.Status,
+				"update_status": "Success",
+			})
 		}
 		if err != nil && err != gorm.ErrRecordNotFound {
 			return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": err.Error()})
@@ -158,16 +198,15 @@ func (s *Server) handleTerminal(c *fiber.Ctx, job models.Job, req monitoringRequ
 			if err := s.DB.Save(&run).Error; err != nil {
 				return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": err.Error()})
 			}
-			if req.Status == "failed" && s.Notifier != nil {
-				go s.Notifier.NotifyFailed(job.Name, &run)
-			}
-			return c.JSON(fiber.Map{"run_id": run.RunID, "status": run.Status})
+			s.notifyAsync(job, req.Status, &run)
+			return c.JSON(fiber.Map{"run_id": run.RunID, "status": run.Status, "update_status": "Success"})
 		}
 		if err != gorm.ErrRecordNotFound {
 			return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": err.Error()})
 		}
 	}
 
+	// Offline-friendly: create standalone terminal run when start never registered.
 	if runID == "" {
 		runID = uuid.NewString()
 	}
@@ -186,10 +225,8 @@ func (s *Server) handleTerminal(c *fiber.Ctx, job models.Job, req monitoringRequ
 	if err := s.DB.Create(&run).Error; err != nil {
 		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": err.Error()})
 	}
-	if req.Status == "failed" && s.Notifier != nil {
-		go s.Notifier.NotifyFailed(job.Name, &run)
-	}
-	return c.JSON(fiber.Map{"run_id": run.RunID, "status": run.Status})
+	s.notifyAsync(job, req.Status, &run)
+	return c.JSON(fiber.Map{"run_id": run.RunID, "status": run.Status, "update_status": "Success"})
 }
 
 func (s *Server) Heartbeat(c *fiber.Ctx) error {
@@ -234,7 +271,62 @@ func (s *Server) Heartbeat(c *fiber.Ctx) error {
 			return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": err.Error()})
 		}
 	}
+
+	// Fresh heartbeat clears miss-alert debounce.
+	if job.LastMissAlertAt != nil {
+		job.LastMissAlertAt = nil
+		_ = s.DB.Model(&job).Update("last_miss_alert_at", nil).Error
+	}
+
 	return c.JSON(fiber.Map{"ok": true, "job_name": job.Name, "seen_at": hb.SeenAt})
+}
+
+// CheckHeartbeat scans for stale heartbeats and sends miss alerts (debounce: once until heartbeat resumes).
+func (s *Server) CheckHeartbeat(c *fiber.Ctx) error {
+	alerted, err := s.ScanStaleHeartbeats()
+	if err != nil {
+		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": err.Error()})
+	}
+	return c.JSON(fiber.Map{"Heartbeat Check": "Started", "alerted": alerted})
+}
+
+// ScanStaleHeartbeats finds jobs past their stale threshold that have not yet been alerted
+// for the current miss window, notifies, and records LastMissAlertAt.
+func (s *Server) ScanStaleHeartbeats() (int, error) {
+	now := time.Now().UTC()
+	var heartbeats []models.Heartbeat
+	if err := s.DB.Find(&heartbeats).Error; err != nil {
+		return 0, err
+	}
+	alerted := 0
+	for _, hb := range heartbeats {
+		var job models.Job
+		if err := s.DB.First(&job, hb.JobID).Error; err != nil {
+			continue
+		}
+		staleSec := job.HeartbeatStaleAfterSec
+		if staleSec <= 0 {
+			staleSec = s.Cfg.HeartbeatStaleAfterSec
+		}
+		if staleSec <= 0 {
+			staleSec = 300
+		}
+		cutoff := now.Add(-time.Duration(staleSec) * time.Second)
+		if !hb.SeenAt.Before(cutoff) {
+			continue
+		}
+		if job.LastMissAlertAt != nil {
+			continue
+		}
+		s.notifyAsync(job, "heartbeat", nil)
+		t := now
+		if err := s.DB.Model(&job).Update("last_miss_alert_at", t).Error; err != nil {
+			log.Printf("heartbeat miss debounce update failed: %v", err)
+			continue
+		}
+		alerted++
+	}
+	return alerted, nil
 }
 
 func (s *Server) EnterpriseStub(c *fiber.Ctx) error {
@@ -256,15 +348,46 @@ func (s *Server) ensureJob(name string) (models.Job, error) {
 	if err != gorm.ErrRecordNotFound {
 		return job, err
 	}
-	job = models.Job{Name: name}
+	stale := s.Cfg.HeartbeatStaleAfterSec
+	if stale <= 0 {
+		stale = 300
+	}
+	job = models.Job{
+		Name:                    name,
+		NotifyOnStart:           s.Cfg.NotifyOnStart,
+		NotifyOnSuccess:         s.Cfg.NotifyOnSuccess,
+		NotifyOnFailure:         s.Cfg.NotifyOnFailure,
+		NotifyOnHeartbeatMissed: s.Cfg.NotifyOnHeartbeatMissed,
+		HeartbeatStaleAfterSec:  stale,
+	}
 	if err := s.DB.Create(&job).Error; err != nil {
-		// race on unique name
 		if s.DB.Where("name = ?", name).First(&job).Error == nil {
 			return job, nil
 		}
 		return job, err
 	}
 	return job, nil
+}
+
+func (s *Server) notifyAsync(job models.Job, status string, run *models.Run) {
+	if s.Notifier == nil {
+		return
+	}
+	go s.Notifier.Notify(job, status, run)
+}
+
+func idempotencyBase(key string) string {
+	if key == "" {
+		return ""
+	}
+	key = strings.TrimSpace(key)
+	if strings.HasSuffix(key, ":register") {
+		return key[:len(key)-len(":register")]
+	}
+	if strings.HasSuffix(key, ":complete") {
+		return key[:len(key)-len(":complete")]
+	}
+	return key
 }
 
 func rawOrEmpty(raw json.RawMessage) string {

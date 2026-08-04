@@ -1,0 +1,31 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>{{.Title}} · SEER</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Source+Sans+3:wght@400;600;700&family=Syne:wght@600;700;800&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="/ui/static/app.css" />
+</head>
+<body>
+  <div class="atmosphere" aria-hidden="true"></div>
+  <header class="shell-header">
+    <a class="brand" href="/ui/">SEER</a>
+    {{if .Authed}}
+    <nav class="shell-nav">
+      <a href="/ui/" class="{{if eq .Nav "jobs"}}active{{end}}">Jobs</a>
+      <a href="/ui/channels" class="{{if eq .Nav "channels"}}active{{end}}">Channels</a>
+    </nav>
+    <form method="post" action="/ui/logout" class="logout-form">
+      <button type="submit" class="btn ghost">Log out</button>
+    </form>
+    {{end}}
+  </header>
+  <main class="shell-main {{if .Panel}}panel-enter{{end}}">
+    {{template "content" .}}
+  </main>
+  <script src="/ui/static/app.js"></script>
+</body>
+</html>

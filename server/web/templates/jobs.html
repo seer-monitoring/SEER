@@ -1,0 +1,16 @@
+{{define "content"}}
+<section class="page-head">
+  <div>
+    <h1>Jobs</h1>
+    <p class="sub">Runs and heartbeats from CLI / SDK ingest. Jobs appear on first event.</p>
+  </div>
+  <div class="actions">
+    <button type="button" class="btn ghost" data-refresh>Refresh</button>
+    <button type="button" class="btn secondary" id="check-hb">Check heartbeats</button>
+  </div>
+</section>
+<p id="flash" class="flash" hidden></p>
+<div id="jobs-root" class="table-wrap" data-empty="No jobs yet. Send a CLI or SDK event to create one.">
+  <p class="muted">Loading…</p>
+</div>
+{{end}}
