@@ -1,180 +1,183 @@
 # SEER
 
-**Job monitoring that survives network failure.**
+**Offline-first job monitoring — not another ping service.**
 
-SEER watches cron jobs, ETL pipelines, workers, and long-running batch work. When the network flaps, standard ping services drop telemetry or fire false “missed” alerts. SEER keeps a durable local queue, preserves your process exit code, and delivers the real outcome when connectivity returns.
+Generic cron pings disappear when the network flaps, then fire false **missed / failed** alerts. **SEER** is different: it persists outcomes locally with atomic writes, keeps your process exit code intact, and delivers the real result when connectivity returns — no false positives from a blip.
 
-**Cloud product:** [seer.ansrstudio.com](https://seer.ansrstudio.com) — dashboard, API keys, pipelines, Slack/email, and managed alerting.
+**Cloud:** [seer.ansrstudio.com](https://seer.ansrstudio.com) — dashboard, API keys, pipelines, managed Slack/email  
+**This repo:** Python SDK · CLI · Community Edition self-host server (+ embedded ops UI)
 
-**This repository** is the open client + Community Edition stack: Python SDK, CLI, and a self-hosted Go ingest server with an embedded ops UI.
+```python
+# One-liners that ship to production
+with Seer(api_key=KEY, auto_replay=True).monitor("daily_etl"): run()          # Python
+@app.task(base=SeerTask)                                                      # Celery
+def etl(): ...
+```
+
+```bash
+seer run daily_etl -- python etl.py   # any language via CLI
+```
 
 ---
 
-## Why SEER
+## Why not a generic ping?
 
-| Problem                                  | What SEER does                                           |
-| ---------------------------------------- | -------------------------------------------------------- |
-| Network blip → false “job missed”        | Offline queue + idempotent register/complete             |
-| Monitoring outage fails your job         | Uploads never override your exit code / exception        |
-| Cron wrappers only work for one language | CLI wraps **any** command; Python gets a first-class SDK |
-| Self-host needs a dashboard              | CE server ships ingest **and** `/ui` in one binary       |
+| Generic “I’m alive” ping | SEER |
+| ------------------------ | ---- |
+| Silence = failure (noisy) | Silence = wait; outcome is queued |
+| Network flap → false alert | Atomic offline queue → replay |
+| Often drops mid-run context | Full lifecycle: running → success/failed + logs |
+| Monitoring outage can fail the job | Your exit code / exception always wins |
+
+---
+
+## Atomic offline queue
+
+When upload fails, SEER never leaves a half-written envelope on disk. Writers use temp + rename so readers only ever see complete JSON:
 
 ```text
-Your job runs locally
-    │
-    ├─► register running  ──┐
-    ├─► heartbeats        ──┼──► SEER Cloud  or  CE server
-    └─► success / failed  ──┘
-              │
-         if offline → ~/.seer/queue → replay later
+  ~/.seer/queue/
+       │
+       │  1) write envelope to temp
+       ▼
+  job.json.<uuid>.tmp  ──os.replace / rename──►  job.json     (pending)
+       │                                              │
+       │                                              │  2) claim for send
+       │                                              ▼
+       │                                         job.json.sending
+       │                                              │
+       │                         success ─────────────┼──► delete
+       │                         fail (retries left) ─┼──► job.json (attempts++)
+       │                         fail (max attempts) ─┴──► dead/job.json
+       │
+  replay / seer queue flush / auto_replay / background_replay
+       │
+       ▼
+  SEER Cloud (api.ansrstudio.com)  or  CE server (:8080)
 ```
+
+Shared by **seerpy** and the **CLI**. Caps: `SEER_QUEUE_MAX_FILES` / `SEER_QUEUE_MAX_BYTES` (FIFO eviction). Inspect with `seer queue status` · `list-dead` · `retry-dead`.
+
+```mermaid
+flowchart LR
+  job[Your job] -->|POST fails| tmp["*.json.tmp"]
+  tmp -->|atomic rename| pending["*.json"]
+  pending -->|claim| sending["*.sending"]
+  sending -->|OK| done[Delivered]
+  sending -->|retry| pending
+  sending -->|max attempts| dead["dead/*.json"]
+  dead -->|retry-dead| pending
+  pending -->|flush| api[SEER API]
+```
+
+---
+
+## Instrument in seconds
+
+**Python**
+
+```python
+from seerpy import Seer
+seer = Seer(api_key="YOUR_KEY", auto_replay=True)  # cloud default host
+with seer.monitor("daily_etl", capture_logs=True):
+    run_pipeline()
+```
+
+**Celery** (`pip install seerpy[celery]`)
+
+```python
+from seerpy.integrations.celery import SeerTask, set_default_seer
+set_default_seer(Seer(api_key="YOUR_KEY", auto_replay=True))
+
+@app.task(base=SeerTask, seer_capture_logs=True)
+def daily_etl():
+    ...
+```
+
+**CLI — any runtime**
+
+```bash
+export SEER_API_KEY=your_key
+seer run daily_etl -- python etl.py
+seer run daily_etl -- node worker.js
+seer heartbeat long_worker
+seer queue status
+```
+
+Point at self-host with `SEER_BASE_URL=http://127.0.0.1:8080` (or `base_url=` in Python).
 
 ---
 
 ## Choose your path
 
-### Hosted (recommended for most teams)
+### Hosted — [seer.ansrstudio.com](https://seer.ansrstudio.com)
 
-1. Open **[seer.ansrstudio.com](https://seer.ansrstudio.com)** and create an account.
-2. Create a pipeline / job name in the dashboard.
-3. Copy your API key.
-4. Point the SDK or CLI at the cloud API (default host — no `SEER_BASE_URL` needed):
-
-```bash
-export SEER_API_KEY=your_key
-# default: https://api.ansrstudio.com
-```
-
-Docs and account UI live on the cloud site. This repo is how you **instrument** jobs against that API (or against self-hosted CE).
+1. Create an account and a pipeline name  
+2. Copy your API key  
+3. Use the SDK/CLI with the default API host (`https://api.ansrstudio.com`)
 
 ### Self-hosted Community Edition
 
-Run the Go server locally or in Docker. Jobs auto-create on first event. Sign into the embedded UI with your API key.
-
 ```bash
-cd server
-export SEER_API_KEYS=dev-key
-go run ./cmd/seer-server
+cd server && export SEER_API_KEYS=dev-key && go run ./cmd/seer-server
 # UI → http://localhost:8080/ui/login  (key: dev-key)
 ```
 
-CE includes Slack webhook + SMTP alerts, per-job notify settings, heartbeat miss checks, and queue-friendly ingest. Enterprise features (RBAC, SSO, PagerDuty/Datadog sync, audit logging) stay behind `/enterprise/*` paywall stubs.
+Jobs auto-create on first event. Slack webhook + SMTP, per-job notify flags, heartbeat miss checks, and `/ui` ship in one binary.
 
 ---
 
-## Monorepo map
+## Community vs Enterprise
 
-| Path                           | Package         | Role                                                        |
-| ------------------------------ | --------------- | ----------------------------------------------------------- |
-| [`sdks/python/`](sdks/python/) | **seerpy**      | Python SDK — `monitor()`, heartbeats, offline queue, Celery |
-| [`cli/`](cli/)                 | **seer**        | Wrap any command — `run`, `heartbeat`, `queue`, `replay`    |
-| [`server/`](server/)           | **seer-server** | CE ingest + alerts + embedded ops UI                        |
+| | **Community** (this repo) | **Enterprise / Cloud** |
+| - | ------------------------- | ---------------------- |
+| Agents | seerpy + CLI, offline queue, Celery | Same agents against managed API |
+| Ingest | Self-host Go CE + SQLite | Hosted at [seer.ansrstudio.com](https://seer.ansrstudio.com) |
+| UI | Embedded `/ui` ops console | Full product dashboard |
+| Alerts | Slack webhook + SMTP | Managed channels + routing |
+| Auth / teams | Shared API keys | RBAC, Okta / SSO |
+| Incident sync | — | PagerDuty / Datadog (and more) |
+| Compliance | — | SOC 2, VPC / private runners |
 
-SDK and CLI share the same envelope format and default queue path (`~/.seer/queue`).
-
----
-
-## Quick start
-
-### Python
-
-```bash
-cd sdks/python
-pip install -e ".[dev]"
-```
-
-```python
-from seerpy import Seer
-
-# Cloud: use your seer.ansrstudio.com API key (default host)
-# Self-host: Seer(api_key="dev-key", base_url="http://127.0.0.1:8080", auto_replay=True)
-seer = Seer(api_key="YOUR_SEER_API_KEY", auto_replay=True)
-
-with seer.monitor("daily_etl", capture_logs=True, tags=["prod"]):
-    run_pipeline()
-```
-
-Celery: `pip install seerpy[celery]` — see [`sdks/python/README.md`](sdks/python/README.md).
-
-### CLI
-
-```bash
-cd cli
-go build -o seer .
-export SEER_API_KEY=your_key
-./seer run daily_etl -- python etl.py
-./seer heartbeat worker --metadata='{"pid":1}'
-./seer queue status
-```
-
-### Community Edition server
-
-```bash
-cd server
-export SEER_API_KEYS=dev-key
-go run ./cmd/seer-server
-```
-
-Open [http://localhost:8080/ui](http://localhost:8080/ui) → log in with `dev-key`.
+CE `/enterprise/*` returns a stable **402** so clients can detect edition without bundling EE code.
 
 ---
 
-## Product surface
+## Monorepo
 
-**Clients**
-
-- Register → complete lifecycle with logs, metadata, tags
-- Heartbeats for long-running work
-- Offline queue with FIFO caps, dead-letter, jittered retry/replay
-- CLI queue tools: `status`, `flush`, `list-dead`, `retry-dead`
-
-**Community Edition server**
-
-- `/monitoring`, `/heartbeat`, `/check_heartbeat`
-- Embedded UI: jobs, runs, notify settings, alert channels
-- Slack webhook + SMTP (env and/or UI channels)
-
-**Cloud** ([seer.ansrstudio.com](https://seer.ansrstudio.com))
-
-- Managed dashboard, pipelines, keys, and team workflows
-- Production alerting and hosted reliability
+| Path | Package | Role |
+| ---- | ------- | ---- |
+| [`sdks/python/`](sdks/python/) | **seerpy** | SDK — monitor, heartbeats, queue, Celery |
+| [`cli/`](cli/) | **seer** | Wrap any command; `queue` diagnostics |
+| [`server/`](server/) | **seer-server** | CE ingest + alerts + UI |
 
 ---
 
 ## Give to an agent
 
-Paste the block below into Cursor (or any coding agent) to stand up and verify the full local stack.
+Paste into Cursor (or any coding agent) to stand up and verify the full local stack:
 
 ````markdown
 # SEER local stack — agent runbook
 
-You are working in the SEER monorepo. Goal: start Community Edition, exercise CLI + Python SDK against it, and confirm the UI. Do not commit unless asked.
+Work in this monorepo. Start Community Edition, exercise CLI + Python against it, confirm UI. Do not commit unless asked.
 
-## 0) Prerequisites
-
-- Go 1.22+, Python 3.10+, network for first `pip`/`go` module fetch
-- Workspace root: this repo (contains `cli/`, `sdks/python/`, `server/`)
+## Prerequisites
+- Go 1.22+, Python 3.10+
+- Repo root contains `cli/`, `sdks/python/`, `server/`
 
 ## 1) Start CE server (background)
-
 ```powershell
 cd server
 $env:SEER_API_KEYS = "dev-key"
 $env:SEER_DB_PATH = "$(Get-Location)\data\agent-seer.db"
 $env:SEER_HTTP_ADDR = ":8080"
 $env:SEER_NOTIFY_ON_FAILURE = "true"
-$env:SEER_REPLAY_JITTER_MS = "0"   # only for clients; server ignores this
 go run ./cmd/seer-server
 ```
+Wait for listen/UI logs. Check: `Invoke-RestMethod http://127.0.0.1:8080/health`
 
-Wait until logs show listening / UI enabled. Health check:
-
-```powershell
-Invoke-RestMethod http://127.0.0.1:8080/health
-```
-
-## 2) Build CLI and run jobs
-
+## 2) CLI jobs
 ```powershell
 cd cli
 go build -o seer.exe .
@@ -183,61 +186,51 @@ $env:SEER_BASE_URL = "http://127.0.0.1:8080"
 $env:SEER_REPLAY_JITTER_MS = "0"
 $env:SEER_QUEUE_DIR = "$env:TEMP\seer-agent-queue"
 New-Item -ItemType Directory -Force -Path $env:SEER_QUEUE_DIR | Out-Null
-
-.\seer.exe run agent_etl --tags=agent,demo -- powershell -NoProfile -Command "Write-Host 'etl ok'; exit 0"
-.\seer.exe run agent_fail --tags=agent,demo -- powershell -NoProfile -Command "Write-Host 'boom'; exit 1"
+.\seer.exe run agent_etl --tags=agent -- powershell -NoProfile -Command "Write-Host ok; exit 0"
+.\seer.exe run agent_fail --tags=agent -- powershell -NoProfile -Command "Write-Host boom; exit 1"
 .\seer.exe heartbeat agent_worker --metadata='{\"tick\":1}'
 .\seer.exe queue status
 ```
 
-## 3) Python SDK smoke
-
+## 3) Python + tests
 ```powershell
 cd sdks/python
 pip install -e ".[dev,celery]" -q
 $env:SEER_API_KEY = "dev-key"
 $env:SEER_BASE_URL = "http://127.0.0.1:8080"
 $env:SEER_REPLAY_JITTER_MS = "0"
-python -c "from seerpy import Seer; s=Seer(api_key='dev-key', base_url='http://127.0.0.1:8080', auto_replay=True);
-exec('with s.monitor(\"agent_py\", capture_logs=True):\n print(\"hello from seerpy\")')"
+python -c "from seerpy import Seer; s=Seer(api_key='dev-key', base_url='http://127.0.0.1:8080', auto_replay=True)
+with s.monitor('agent_py', capture_logs=True):
+    print('hello from seerpy')"
 python -m pytest tests/ -q
 ```
 
-## 4) Server unit tests
-
+## 4) Server tests
 ```powershell
 cd server
 go test ./...
 ```
 
-## 5) UI check
+## 5) UI
+Open http://127.0.0.1:8080/ui/login — key `dev-key`. Confirm demo jobs/runs.
 
-Open http://127.0.0.1:8080/ui/login — API key `dev-key`. Confirm jobs `agent_etl`, `agent_fail`, `agent_worker`, `agent_py` appear with runs/heartbeats.
+## Cloud
+https://seer.ansrstudio.com — use dashboard API key; omit SEER_BASE_URL (defaults to https://api.ansrstudio.com). Cloud jobs must exist in the dashboard; CE auto-creates.
 
-## 6) Optional cloud note
-
-Cloud dashboard is https://seer.ansrstudio.com — for cloud, set SEER_API_KEY from the dashboard and omit SEER_BASE_URL (defaults to https://api.ansrstudio.com). Job names must exist in the cloud dashboard; CE auto-creates jobs.
-
-## Success criteria
-
-- /health returns ok
-- CLI success + failure runs complete; failure preserves non-zero exit
-- pytest green; server go test green
-- UI lists the demo jobs after login
+## Success
+- health ok · CLI exit codes preserved · pytest + `go test` green · UI shows jobs
 ````
+
+---
 
 ## CI
 
-Package-scoped workflows (no cross-repo sync):
-
-- `python-sdk.yml` — test + PyPI from `sdks/python`
-- `cli.yml` — Go test + release binaries from `cli`
-- `server.yml` — Go test/build + GHCR image from `server`
+- `python-sdk.yml` — test + PyPI (`sdks/python`)
+- `cli.yml` — Go test + binaries (`cli`)
+- `server.yml` — Go test/build + GHCR (`server`)
 
 ---
 
 ## License
 
-Copyright © Ansr Studio. See [LICENSE](LICENSE).
-
-Use of the clients is permitted for connecting to the Seer API (cloud or self-hosted). Redistribution and other uses require written permission.
+[MIT](LICENSE) © Ansr Studio

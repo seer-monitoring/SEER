@@ -16,9 +16,7 @@ authors = [
     { name = "SEER", email = "support@mg.ansrstudio.com" }
 ]
 urls = { "Homepage" = "https://github.com/seer-monitoring/seer" }
-license = "LicenseRef-Seer-4.2"
-license-files = ["LICEN[CS]E*"]
-classifiers = [
+license = "MIT"classifiers = [
     "Programming Language :: Python :: 3",
     "Operating System :: OS Independent",
 ]

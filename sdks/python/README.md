@@ -261,8 +261,7 @@ Exercises success/failure monitoring, heartbeats, offline queue, background repl
 
 ## License
 
-Copyright (c) 2025 Ansr Studio.  
-All rights reserved. Use of this software is permitted solely for connecting to and interacting with the Seer API. Redistribution, modification, or any other use of this code is prohibited without written permission from Ansr Studio. See the LICENSE file for details.
+[MIT](../../LICENSE) © Ansr Studio
 
 ## About
 
