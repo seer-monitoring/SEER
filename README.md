@@ -136,8 +136,8 @@ Jobs auto-create on first event. Generic webhook + SMTP, per-job notify flags, h
 | UI            | Embedded `/ui` ops console          | Full product dashboard                                       |
 | Alerts        | Generic webhook + SMTP              | Managed channels + routing                                   |
 | Auth / teams  | Shared API keys                     | RBAC, Okta / SSO                                             |
-| Incident sync | —                                   | PagerDuty / Datadog (and more)                               |
-| Compliance    | —                                   | SOC 2, VPC / private runners                                 |
+| Incident sync | —                                   | PagerDuty / Datadog (Coming Soon)                            |
+| Compliance    | —                                   | VPC (Coming Soon)                                            |
 
 CE `/enterprise/*` returns a stable **402** so clients can detect edition without bundling EE code.
 
