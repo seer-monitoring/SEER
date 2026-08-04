@@ -1,10 +1,12 @@
 package main
 
 import (
+	"math/rand/v2"
 	"os"
 	"path/filepath"
 	"strconv"
 	"strings"
+	"time"
 )
 
 const (
@@ -14,6 +16,7 @@ const (
 	defaultMaxQueueBytes  = 50 * 1024 * 1024 // 50 MiB
 	defaultTimeoutSec     = 30
 	defaultReplayInterval = 60
+	defaultReplayJitterMS = 2000
 	envelopeVersion       = 3
 	maxLogBytes           = 200_000
 )
@@ -65,4 +68,24 @@ func getQueueLimits() (maxFiles, maxBytes int) {
 
 func getTimeout() int {
 	return envInt("SEER_TIMEOUT", defaultTimeoutSec)
+}
+
+func getReplayJitter() time.Duration {
+	ms := envIntAllowZero("SEER_REPLAY_JITTER_MS", defaultReplayJitterMS)
+	if ms <= 0 {
+		return 0
+	}
+	return time.Duration(rand.Float64() * float64(ms) * float64(time.Millisecond))
+}
+
+func envIntAllowZero(name string, fallback int) int {
+	raw := os.Getenv(name)
+	if raw == "" {
+		return fallback
+	}
+	n, err := strconv.Atoi(raw)
+	if err != nil || n < 0 {
+		return fallback
+	}
+	return n
 }

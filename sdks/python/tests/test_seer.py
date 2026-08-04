@@ -11,10 +11,12 @@ import pytest
 import requests
 
 from seerpy import Seer
-from seerpy.http import parse_json_response, post_with_backoff
+from seerpy.http import compute_backoff_delay, parse_json_response, post_with_backoff
 from seerpy.payloads import (
     DEFAULT_BASE_URL,
+    queue_status,
     replay_failed_payloads,
+    retry_dead,
     save_failed_payload,
 )
 
@@ -27,11 +29,12 @@ def queue_dir(tmp_path, monkeypatch):
     return path
 
 
-def _mock_response(status_code=200, payload=None, text=""):
+def _mock_response(status_code=200, payload=None, text="", headers=None):
     response = MagicMock(spec=requests.Response)
     response.status_code = status_code
     response.text = text or json.dumps(payload or {})
     response.json.return_value = payload if payload is not None else {}
+    response.headers = headers or {}
     if status_code >= 400:
         http_error = requests.exceptions.HTTPError(response=response)
         response.raise_for_status.side_effect = http_error
@@ -84,6 +87,28 @@ class TestPostWithBackoff:
         mock_post.side_effect = [limited, ok]
         post_with_backoff("https://example.com/x", {}, {}, max_retries=3)
         assert mock_post.call_count == 2
+
+    def test_full_jitter_bounds(self):
+        import random
+
+        rng = random.Random(0)
+        for attempt in range(6):
+            ceiling = min(1 * (2**attempt), 30)
+            for _ in range(30):
+                d = compute_backoff_delay(attempt, base_delay=1, max_delay=30, rng=rng)
+                assert 0 <= d <= ceiling
+
+    @patch("seerpy.http.time.sleep")
+    @patch("seerpy.http.requests.post")
+    def test_429_honors_retry_after(self, mock_post, mock_sleep):
+        limited = _mock_response(
+            status_code=429, text="slow down", headers={"Retry-After": "2.5"}
+        )
+        ok = _mock_response(payload={"ok": True})
+        mock_post.side_effect = [limited, ok]
+        post_with_backoff("https://example.com/x", {}, {}, max_retries=3)
+        mock_sleep.assert_called()
+        assert mock_sleep.call_args_list[0].args[0] == 2.5
 
 
 class TestMonitor:
@@ -317,7 +342,8 @@ class TestQueueReplay:
         assert sum(f.stat().st_size for f in files) <= 800
 
     @patch.object(Seer, "replay")
-    def test_auto_replay_on_init(self, mock_replay):
+    def test_auto_replay_on_init(self, mock_replay, monkeypatch):
+        monkeypatch.setenv("SEER_REPLAY_JITTER_MS", "0")
         mock_replay.return_value = MagicMock(sent=0, failed=0)
         Seer(api_key="test-key", auto_replay=True)
         mock_replay.assert_called_once()
@@ -330,9 +356,10 @@ class TestQueueReplay:
 
 class TestBackgroundReplay:
     @patch.object(Seer, "replay")
-    def test_background_replay_flushes_periodically(self, mock_replay):
+    def test_background_replay_flushes_periodically(self, mock_replay, monkeypatch):
         import time
 
+        monkeypatch.setenv("SEER_REPLAY_JITTER_MS", "0")
         mock_replay.return_value = MagicMock(sent=0, failed=0)
         seer = Seer(
             api_key="test-key",
@@ -415,3 +442,33 @@ class TestBaseUrlEnvelope:
 
         replay_failed_payloads("key", base_url="https://new.seer.example")
         assert mock_post.call_args.args[0] == "https://original.seer.example/monitoring"
+
+
+class TestQueueDiagnostics:
+    def test_queue_status_and_retry_dead(self, queue_dir):
+        save_failed_payload({"job_name": "live"}, "heartbeat", idempotency_key="p1")
+        dead = queue_dir / "dead" / "dead_item.json"
+        dead.write_text(
+            json.dumps(
+                {
+                    "version": 3,
+                    "endpoint": "monitoring",
+                    "base_url": "https://example.com",
+                    "payload": {"job_name": "dead_job", "status": "failed"},
+                    "created_at": "2026-01-01T00:00:00Z",
+                    "attempts": 5,
+                    "idempotency_key": "dead-key",
+                }
+            ),
+            encoding="utf-8",
+        )
+        st = queue_status()
+        assert st.pending == 1
+        assert st.dead == 1
+
+        result = retry_dead(all_dead=True, flush=False)
+        assert result["restored"] == 1
+        assert not dead.exists()
+        st2 = queue_status()
+        assert st2.pending == 2
+        assert st2.dead == 0

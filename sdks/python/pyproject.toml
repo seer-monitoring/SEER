@@ -25,6 +25,7 @@ classifiers = [
 
 [project.optional-dependencies]
 dev = ["pytest", "python-dotenv"]
+celery = ["celery>=5.3"]
 
 [tool.setuptools.packages.find]
 include = ["seerpy*"]

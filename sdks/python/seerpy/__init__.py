@@ -1,4 +1,15 @@
 from .seer import Seer
-from .payloads import replay_failed_payloads, save_failed_payload
+from .payloads import (
+    queue_status,
+    replay_failed_payloads,
+    retry_dead,
+    save_failed_payload,
+)
 
-__all__ = ["Seer", "replay_failed_payloads", "save_failed_payload"]
+__all__ = [
+    "Seer",
+    "queue_status",
+    "replay_failed_payloads",
+    "retry_dead",
+    "save_failed_payload",
+]

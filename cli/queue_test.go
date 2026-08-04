@@ -238,3 +238,54 @@ func TestParseTags(t *testing.T) {
 		t.Fatalf("json: %#v", got)
 	}
 }
+
+func TestQueueStatusAndRetryDead(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("SEER_QUEUE_DIR", dir)
+
+	pendingPath, err := saveFailedPayload(map[string]any{"job_name": "live"}, "heartbeat", "p1", "https://example.com", dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = pendingPath
+
+	deadPath := filepath.Join(dir, "dead", "dead_item.json")
+	env := Envelope{
+		Version:        envelopeVersion,
+		Endpoint:       "monitoring",
+		BaseURL:        "https://example.com",
+		Payload:        map[string]any{"job_name": "dead_job", "status": "failed"},
+		CreatedAt:      utcNowISO(),
+		Attempts:       5,
+		IdempotencyKey: "dead-key",
+	}
+	if err := atomicWriteJSON(deadPath, env); err != nil {
+		t.Fatal(err)
+	}
+
+	st, err := queueStatus(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if st.Pending != 1 || st.Dead != 1 {
+		t.Fatalf("status=%+v", st)
+	}
+
+	restored, errs, err := retryDeadLetters(dir, true, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if restored != 1 || len(errs) != 0 {
+		t.Fatalf("restored=%d errs=%v", restored, errs)
+	}
+	if _, err := os.Stat(deadPath); !os.IsNotExist(err) {
+		t.Fatal("expected dead file removed")
+	}
+	st2, err := queueStatus(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if st2.Pending != 2 || st2.Dead != 0 {
+		t.Fatalf("after retry status=%+v", st2)
+	}
+}

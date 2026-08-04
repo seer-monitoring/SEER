@@ -63,12 +63,14 @@ This release rebuilds the offline path and hardens the client. Summary of change
 ### Reliability / correctness fixes
 
 - Monitoring never raises from `finally` — Seer outages cannot mask your job’s exception or fail the job.
-- HTTP **4xx** are not retried (except **429**); **5xx** and connection errors still use exponential backoff.
+- HTTP **4xx** are not retried (except **429**); **5xx** and connection errors use **full-jitter** exponential backoff (optional `Retry-After` on 429).
+- Auto-replay / background flush apply startup jitter (`SEER_REPLAY_JITTER_MS`, default 2000) to avoid reconnect stampedes.
 - Response JSON parsing handles both dict and string bodies (no double-decode crash).
 - Log capture **restores** prior logging handlers/levels (no longer clears `logger.handlers`).
 - Shared `requests.Session`, configurable timeouts, consolidated HTTP helper.
 - `tags` supported on `monitor()` / `heartbeat()`.
 - `api_key=` preferred; `apiKey=` kept for compatibility.
+- Optional **Celery** integration: `pip install seerpy[celery]` → `SeerTask` / `connect_seer_signals`.
 
 ### Packaging & hygiene
 
@@ -161,17 +163,49 @@ seer.stop_background_replay()  # optional clean shutdown
 | `SEER_QUEUE_DIR`       | Offline queue directory (default `~/.seer/queue`) |
 | `SEER_QUEUE_MAX_FILES` | Max queued envelopes (default `500`)              |
 | `SEER_QUEUE_MAX_BYTES` | Max queue size in bytes (default `50 MiB`)        |
+| `SEER_REPLAY_JITTER_MS`| Max startup jitter before auto-replay (default `2000`) |
 
 ```python
 from dotenv import load_dotenv
 import os
-from seerpy import Seer
+from seerpy import Seer, queue_status, retry_dead
 
 load_dotenv()
 seer = Seer(api_key=os.getenv("SEER_API_KEY"), auto_replay=True)
+print(queue_status())
+retry_dead(api_key=os.getenv("SEER_API_KEY"), all_dead=True)
 ```
 
 (`python-dotenv` is optional; install separately if you use `.env` files.)
+
+---
+
+## Celery
+
+```bash
+pip install seerpy[celery]
+```
+
+```python
+from celery import Celery
+from seerpy import Seer
+from seerpy.integrations.celery import SeerTask, set_default_seer
+
+seer = Seer(api_key="...", auto_replay=True)
+set_default_seer(seer)
+
+app = Celery("workers")
+
+@app.task(base=SeerTask, seer_capture_logs=True)
+def etl():
+    ...
+```
+
+Or wire all tasks via signals: `connect_seer_signals(seer)`.
+
+See `examples/celery_demo.py`.
+
+Community Edition backends already support Slack webhooks + SMTP email; PagerDuty/Opsgenie/Datadog sync remain Enterprise.
 
 ---
 

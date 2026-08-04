@@ -115,7 +115,19 @@ seer heartbeat <job-name> [--metadata=<json>] [--tags=a,b] [--base-url=<url>]
 seer replay [--max-attempts=5] [--base-url=<url>]
 ```
 
-`replay-failed` is kept as an alias for compatibility.
+`replay-failed` is kept as an alias for compatibility. Prefer `seer queue flush` for the same behavior.
+
+### `seer queue`
+
+```bash
+seer queue status
+seer queue flush [--max-attempts=5]
+seer queue list-dead
+seer queue retry-dead --all
+seer queue retry-dead dead_item.json --no-flush
+```
+
+Inspect pending / `.sending` / `dead/` envelopes, flush the queue, and re-queue dead letters (attempts reset to 0).
 
 ---
 
@@ -126,9 +138,10 @@ seer replay [--max-attempts=5] [--base-url=<url>]
 | `SEER_API_KEY` | API key (required) |
 | `SEER_BASE_URL` | Override default API host |
 | `SEER_QUEUE_DIR` | Offline queue directory (default `~/.seer/queue`) |
-| `SEER_QUEUE_MAX_FILES` | Max queued envelopes (default `500`) |
-| `SEER_QUEUE_MAX_BYTES` | Max queue size in bytes (default `50 MiB`) |
+| `SEER_QUEUE_MAX_FILES` | Max queued envelopes (default `500`; raise toward `1000` if needed) |
+| `SEER_QUEUE_MAX_BYTES` | Max queue size in bytes (default `50 MiB`; raise toward `100 MiB` if needed) |
 | `SEER_TIMEOUT` | HTTP timeout seconds (default `30`) |
+| `SEER_REPLAY_JITTER_MS` | Max random delay before auto-replay / first background flush (default `2000`) |
 
 ## Live smoke test
 

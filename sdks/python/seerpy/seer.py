@@ -6,6 +6,7 @@ import atexit
 import logging
 import sys
 import threading
+import time
 import traceback
 import uuid
 from contextlib import contextmanager
@@ -15,7 +16,7 @@ from typing import Any, Dict, Iterator, List, Optional
 
 import requests
 
-from .http import parse_json_response, post_with_backoff
+from .http import parse_json_response, post_with_backoff, replay_startup_jitter_seconds
 from .payloads import (
     ReplayResult,
     replay_failed_payloads,
@@ -81,6 +82,9 @@ class Seer:
 
         if auto_replay:
             try:
+                jitter = replay_startup_jitter_seconds()
+                if jitter > 0:
+                    time.sleep(jitter)
                 self.replay()
             except Exception as exc:
                 print(f"Seer auto_replay skipped: {exc}")
@@ -132,6 +136,10 @@ class Seer:
         self._bg_stop.clear()
 
         def _loop() -> None:
+            # Stampede guard before the first flush when many workers start together.
+            jitter = replay_startup_jitter_seconds()
+            if jitter > 0 and self._bg_stop.wait(timeout=jitter):
+                return
             while not self._bg_stop.is_set():
                 try:
                     self.replay()

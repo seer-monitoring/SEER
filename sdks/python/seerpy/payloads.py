@@ -60,6 +60,135 @@ def get_queue_limits() -> Tuple[int, int]:
     )
 
 
+@dataclass
+class QueueStatus:
+    pending: int = 0
+    sending: int = 0
+    dead: int = 0
+    pending_bytes: int = 0
+    dead_bytes: int = 0
+    oldest_pending: Optional[str] = None
+    max_files: int = 0
+    max_bytes: int = 0
+    queue_dir: str = ""
+
+
+def queue_status(queue_dir: Optional[str] = None) -> QueueStatus:
+    """Inspect pending, in-flight (.sending), and dead-letter envelopes."""
+    path = _ensure_queue_dir(queue_dir)
+    max_files, max_bytes = get_queue_limits()
+    status = QueueStatus(max_files=max_files, max_bytes=max_bytes, queue_dir=path)
+
+    pending = _list_queue_files(path)
+    status.pending = len(pending)
+    if pending:
+        status.oldest_pending = pending[0]
+    for name in pending:
+        status.pending_bytes += os.path.getsize(os.path.join(path, name))
+
+    for name in os.listdir(path):
+        if name.endswith(".json.sending"):
+            status.sending += 1
+
+    dead_dir = os.path.join(path, "dead")
+    if os.path.isdir(dead_dir):
+        for name in os.listdir(dead_dir):
+            if name.endswith(".json"):
+                status.dead += 1
+                status.dead_bytes += os.path.getsize(os.path.join(dead_dir, name))
+    return status
+
+
+def list_dead_letters(queue_dir: Optional[str] = None) -> List[Dict[str, Any]]:
+    """Return summaries of dead-letter envelopes."""
+    path = _ensure_queue_dir(queue_dir)
+    dead_dir = os.path.join(path, "dead")
+    if not os.path.isdir(dead_dir):
+        return []
+    out: List[Dict[str, Any]] = []
+    for name in sorted(os.listdir(dead_dir)):
+        if not name.endswith(".json"):
+            continue
+        filepath = os.path.join(dead_dir, name)
+        try:
+            envelope = _load_envelope(filepath)
+            payload = envelope.get("payload") or {}
+            out.append(
+                {
+                    "file": name,
+                    "path": filepath,
+                    "endpoint": envelope.get("endpoint"),
+                    "job_name": payload.get("job_name"),
+                    "status": payload.get("status"),
+                    "attempts": envelope.get("attempts", 0),
+                    "created_at": envelope.get("created_at"),
+                }
+            )
+        except Exception as exc:
+            out.append({"file": name, "path": filepath, "error": str(exc)})
+    return out
+
+
+def retry_dead(
+    api_key: Optional[str] = None,
+    *,
+    base_url: Optional[str] = None,
+    queue_dir: Optional[str] = None,
+    filename: Optional[str] = None,
+    all_dead: bool = False,
+    flush: bool = True,
+    max_attempts: int = DEFAULT_MAX_ATTEMPTS,
+) -> Dict[str, Any]:
+    """Move dead-letter envelopes back to pending (attempts=0), optionally flush.
+
+    Pass ``filename`` for one file, or ``all_dead=True`` for every dead letter.
+    """
+    if not filename and not all_dead:
+        raise ValueError("pass filename=... or all_dead=True")
+    path = _ensure_queue_dir(queue_dir)
+    dead_dir = os.path.join(path, "dead")
+    restored = 0
+    errors: List[str] = []
+
+    targets: List[str] = []
+    if all_dead:
+        if os.path.isdir(dead_dir):
+            targets = [
+                os.path.join(dead_dir, n)
+                for n in sorted(os.listdir(dead_dir))
+                if n.endswith(".json")
+            ]
+    else:
+        assert filename is not None
+        candidate = filename
+        if not os.path.isabs(candidate):
+            candidate = os.path.join(dead_dir, os.path.basename(candidate))
+        targets = [candidate]
+
+    for dead_path in targets:
+        try:
+            envelope = _load_envelope(dead_path)
+            envelope["attempts"] = 0
+            if not envelope.get("idempotency_key"):
+                envelope["idempotency_key"] = str(uuid.uuid4())
+            dest = os.path.join(path, os.path.basename(dead_path))
+            _atomic_write_json(dest, envelope)
+            os.remove(dead_path)
+            restored += 1
+        except Exception as exc:
+            errors.append(f"{dead_path}: {exc}")
+
+    result: Dict[str, Any] = {"restored": restored, "errors": errors, "replay": None}
+    if flush and restored and api_key:
+        result["replay"] = replay_failed_payloads(
+            api_key,
+            base_url=base_url,
+            queue_dir=path,
+            max_attempts=max_attempts,
+        )
+    return result
+
+
 def _ensure_queue_dir(queue_dir: Optional[str] = None) -> str:
     path = queue_dir or get_queue_dir()
     os.makedirs(path, exist_ok=True)

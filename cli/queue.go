@@ -448,3 +448,163 @@ func copyMap(in map[string]any) map[string]any {
 	}
 	return out
 }
+
+type QueueStatus struct {
+	Pending       int
+	Sending       int
+	Dead          int
+	PendingBytes  int64
+	DeadBytes     int64
+	OldestPending string
+	MaxFiles      int
+	MaxBytes      int
+	QueueDir      string
+}
+
+type DeadLetterSummary struct {
+	File      string
+	Path      string
+	Endpoint  string
+	JobName   string
+	Status    string
+	Attempts  int
+	CreatedAt string
+	Error     string
+}
+
+func queueStatus(queueDir string) (QueueStatus, error) {
+	path, err := ensureQueueDir(queueDir)
+	if err != nil {
+		return QueueStatus{}, err
+	}
+	maxFiles, maxBytes := getQueueLimits()
+	st := QueueStatus{MaxFiles: maxFiles, MaxBytes: maxBytes, QueueDir: path}
+
+	files, err := listQueueFiles(path)
+	if err != nil {
+		return st, err
+	}
+	st.Pending = len(files)
+	if len(files) > 0 {
+		st.OldestPending = files[0]
+	}
+	for _, name := range files {
+		st.PendingBytes += fileSize(filepath.Join(path, name))
+	}
+
+	entries, err := os.ReadDir(path)
+	if err != nil {
+		return st, err
+	}
+	for _, e := range entries {
+		if !e.IsDir() && strings.HasSuffix(e.Name(), ".json.sending") {
+			st.Sending++
+		}
+	}
+
+	deadDir := filepath.Join(path, "dead")
+	deadEntries, err := os.ReadDir(deadDir)
+	if err != nil {
+		return st, err
+	}
+	for _, e := range deadEntries {
+		if e.IsDir() || !strings.HasSuffix(e.Name(), ".json") {
+			continue
+		}
+		st.Dead++
+		st.DeadBytes += fileSize(filepath.Join(deadDir, e.Name()))
+	}
+	return st, nil
+}
+
+func listDeadLetters(queueDir string) ([]DeadLetterSummary, error) {
+	path, err := ensureQueueDir(queueDir)
+	if err != nil {
+		return nil, err
+	}
+	deadDir := filepath.Join(path, "dead")
+	entries, err := os.ReadDir(deadDir)
+	if err != nil {
+		return nil, err
+	}
+	var out []DeadLetterSummary
+	for _, e := range entries {
+		if e.IsDir() || !strings.HasSuffix(e.Name(), ".json") {
+			continue
+		}
+		full := filepath.Join(deadDir, e.Name())
+		env, loadErr := loadEnvelope(full)
+		sum := DeadLetterSummary{File: e.Name(), Path: full}
+		if loadErr != nil {
+			sum.Error = loadErr.Error()
+			out = append(out, sum)
+			continue
+		}
+		sum.Endpoint = env.Endpoint
+		sum.Attempts = env.Attempts
+		sum.CreatedAt = env.CreatedAt
+		if env.Payload != nil {
+			if v, ok := env.Payload["job_name"].(string); ok {
+				sum.JobName = v
+			}
+			if v, ok := env.Payload["status"].(string); ok {
+				sum.Status = v
+			}
+		}
+		out = append(out, sum)
+	}
+	return out, nil
+}
+
+func retryDeadLetters(queueDir string, all bool, files []string) (int, []string, error) {
+	path, err := ensureQueueDir(queueDir)
+	if err != nil {
+		return 0, nil, err
+	}
+	deadDir := filepath.Join(path, "dead")
+	var targets []string
+	if all {
+		entries, err := os.ReadDir(deadDir)
+		if err != nil {
+			return 0, nil, err
+		}
+		for _, e := range entries {
+			if !e.IsDir() && strings.HasSuffix(e.Name(), ".json") {
+				targets = append(targets, filepath.Join(deadDir, e.Name()))
+			}
+		}
+	} else {
+		for _, f := range files {
+			candidate := f
+			if !filepath.IsAbs(candidate) {
+				candidate = filepath.Join(deadDir, filepath.Base(candidate))
+			}
+			targets = append(targets, candidate)
+		}
+	}
+
+	restored := 0
+	var errs []string
+	for _, deadPath := range targets {
+		env, loadErr := loadEnvelope(deadPath)
+		if loadErr != nil {
+			errs = append(errs, fmt.Sprintf("%s: %v", deadPath, loadErr))
+			continue
+		}
+		env.Attempts = 0
+		if env.IdempotencyKey == "" {
+			env.IdempotencyKey = uuid.NewString()
+		}
+		dest := filepath.Join(path, filepath.Base(deadPath))
+		if err := atomicWriteJSON(dest, env); err != nil {
+			errs = append(errs, fmt.Sprintf("%s: %v", deadPath, err))
+			continue
+		}
+		if err := os.Remove(deadPath); err != nil {
+			errs = append(errs, fmt.Sprintf("%s: %v", deadPath, err))
+			continue
+		}
+		restored++
+	}
+	return restored, errs, nil
+}

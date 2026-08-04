@@ -5,7 +5,10 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"math"
+	"math/rand/v2"
 	"net/http"
+	"strconv"
 	"time"
 )
 
@@ -49,6 +52,27 @@ func authHeaders(apiKey, idempotencyKey string) map[string]string {
 	return headers
 }
 
+// computeBackoffDelay returns a full-jitter delay for attempt (0-based).
+// On 429, prefers Retry-After when it is a numeric second count.
+func computeBackoffDelay(attempt int, baseDelay, maxDelay time.Duration, resp *http.Response) time.Duration {
+	if resp != nil && resp.StatusCode == 429 {
+		if ra := resp.Header.Get("Retry-After"); ra != "" {
+			if secs, err := strconv.ParseFloat(ra, 64); err == nil && secs >= 0 {
+				d := time.Duration(secs * float64(time.Second))
+				if d > maxDelay {
+					return maxDelay
+				}
+				return d
+			}
+		}
+	}
+	ceiling := float64(baseDelay) * math.Pow(2, float64(attempt))
+	if ceiling > float64(maxDelay) {
+		ceiling = float64(maxDelay)
+	}
+	return time.Duration(rand.Float64() * ceiling)
+}
+
 func postWithBackoff(
 	client *http.Client,
 	url string,
@@ -74,6 +98,7 @@ func postWithBackoff(
 			req.Header.Set(k, v)
 		}
 
+		var respForDelay *http.Response
 		resp, err := client.Do(req)
 		if err != nil {
 			lastErr = err
@@ -98,17 +123,18 @@ func postWithBackoff(
 					return nil, httpErr
 				}
 				lastErr = httpErr
+				// Rebuild a lightweight header holder for Retry-After.
+				respForDelay = &http.Response{
+					StatusCode: resp.StatusCode,
+					Header:     resp.Header.Clone(),
+				}
 			}
 		}
 
 		if attempt == maxRetries-1 {
 			break
 		}
-		delay := baseDelay << attempt
-		if delay > maxDelay {
-			delay = maxDelay
-		}
-		time.Sleep(delay)
+		time.Sleep(computeBackoffDelay(attempt, baseDelay, maxDelay, respForDelay))
 	}
 
 	if lastErr != nil {

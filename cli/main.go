@@ -28,6 +28,8 @@ func main() {
 		os.Exit(heartbeatCommand(os.Args[2:]))
 	case "replay", "replay-failed":
 		os.Exit(replayCommand(os.Args[2:]))
+	case "queue":
+		os.Exit(queueCommand(os.Args[2:]))
 	case "help", "-h", "--help":
 		usage()
 	case "version", "--version":
@@ -43,6 +45,7 @@ func usage() {
   seer run <job-name> [flags] [--] <command> [args...]
   seer heartbeat <job-name> [flags]
   seer replay [--max-attempts=N]
+  seer queue status|flush|list-dead|retry-dead [flags]
   seer version
 
 Flags for run:
@@ -60,13 +63,20 @@ Flags for heartbeat:
   --base-url=<url>
   --no-auto-replay
 
+Queue commands:
+  seer queue status
+  seer queue flush [--max-attempts=N] [--base-url=...]
+  seer queue list-dead
+  seer queue retry-dead --all | <file...> [--no-flush] [--max-attempts=N]
+
 Environment:
   SEER_API_KEY            Required API key
   SEER_BASE_URL           API host (default https://api.ansrstudio.com)
   SEER_QUEUE_DIR          Offline queue dir (default ~/.seer/queue)
   SEER_QUEUE_MAX_FILES    Max queued envelopes (default 500)
   SEER_QUEUE_MAX_BYTES    Max queue size in bytes (default 50 MiB)
-  SEER_TIMEOUT            HTTP timeout seconds (default 30)`)
+  SEER_TIMEOUT            HTTP timeout seconds (default 30)
+  SEER_REPLAY_JITTER_MS   Max startup jitter before auto-replay (default 2000)`)
 }
 
 type runOptions struct {
@@ -106,6 +116,9 @@ func runCommand(args []string) int {
 	client := newHTTPClient(getTimeout())
 
 	if opts.autoReplay {
+		if j := getReplayJitter(); j > 0 {
+			time.Sleep(j)
+		}
 		result := replayFailedPayloads(apiKey, baseURL, getQueueDir(), defaultMaxAttempts)
 		if result.Sent+result.Failed+result.DeadLettered > 0 || result.Skipped {
 			fmt.Printf("Auto-replay: sent=%d failed=%d dead_lettered=%d skipped=%v\n",
@@ -241,6 +254,9 @@ func heartbeatCommand(args []string) int {
 	client := newHTTPClient(getTimeout())
 
 	if opts.autoReplay {
+		if j := getReplayJitter(); j > 0 {
+			time.Sleep(j)
+		}
 		_ = replayFailedPayloads(apiKey, baseURL, getQueueDir(), defaultMaxAttempts)
 	}
 
@@ -300,12 +316,127 @@ func replayCommand(args []string) int {
 	return 0
 }
 
+func queueCommand(args []string) int {
+	if len(args) < 1 {
+		fmt.Println("queue subcommand required: status | flush | list-dead | retry-dead")
+		return 1
+	}
+	switch args[0] {
+	case "status":
+		st, err := queueStatus(getQueueDir())
+		if err != nil {
+			fmt.Println(err)
+			return 1
+		}
+		fmt.Printf("queue_dir=%s\n", st.QueueDir)
+		fmt.Printf("pending=%d (bytes=%d) sending=%d dead=%d (bytes=%d)\n",
+			st.Pending, st.PendingBytes, st.Sending, st.Dead, st.DeadBytes)
+		fmt.Printf("limits: max_files=%d max_bytes=%d\n", st.MaxFiles, st.MaxBytes)
+		if st.OldestPending != "" {
+			fmt.Printf("oldest_pending=%s\n", st.OldestPending)
+		}
+		return 0
+	case "flush":
+		return replayCommand(args[1:])
+	case "list-dead":
+		items, err := listDeadLetters(getQueueDir())
+		if err != nil {
+			fmt.Println(err)
+			return 1
+		}
+		if len(items) == 0 {
+			fmt.Println("No dead-letter envelopes.")
+			return 0
+		}
+		for _, it := range items {
+			if it.Error != "" {
+				fmt.Printf("%s  error=%s\n", it.File, it.Error)
+				continue
+			}
+			fmt.Printf("%s  endpoint=%s job=%s status=%s attempts=%d\n",
+				it.File, it.Endpoint, it.JobName, it.Status, it.Attempts)
+		}
+		return 0
+	case "retry-dead":
+		apiKey := resolveAPIKey()
+		baseURL := resolveBaseURL("")
+		maxAttempts := defaultMaxAttempts
+		all := false
+		flush := true
+		var files []string
+		for _, arg := range args[1:] {
+			switch {
+			case arg == "--all":
+				all = true
+			case arg == "--no-flush":
+				flush = false
+			case strings.HasPrefix(arg, "--max-attempts="):
+				n, err := strconv.Atoi(strings.TrimPrefix(arg, "--max-attempts="))
+				if err != nil || n <= 0 {
+					fmt.Println("Invalid --max-attempts")
+					return 1
+				}
+				maxAttempts = n
+			case strings.HasPrefix(arg, "--base-url="):
+				baseURL = resolveBaseURL(strings.TrimPrefix(arg, "--base-url="))
+			case strings.HasPrefix(arg, "--"):
+				fmt.Println("Unknown flag:", arg)
+				return 1
+			default:
+				files = append(files, arg)
+			}
+		}
+		if !all && len(files) == 0 {
+			fmt.Println("retry-dead requires --all or one or more dead letter filenames")
+			return 1
+		}
+		restored, errs, err := retryDeadLetters(getQueueDir(), all, files)
+		if err != nil {
+			fmt.Println(err)
+			return 1
+		}
+		for _, e := range errs {
+			fmt.Println(e)
+		}
+		fmt.Printf("Restored %d dead-letter envelope(s) to pending.\n", restored)
+		if !flush || restored == 0 {
+			if len(errs) > 0 {
+				return 1
+			}
+			return 0
+		}
+		if apiKey == "" {
+			fmt.Println("SEER_API_KEY not set; restored to pending but did not flush. Run `seer queue flush`.")
+			return 1
+		}
+		result := replayFailedPayloads(apiKey, baseURL, getQueueDir(), maxAttempts)
+		fmt.Printf("✓ Flush complete: sent=%d failed=%d dead_lettered=%d skipped=%v\n",
+			result.Sent, result.Failed, result.DeadLettered, result.Skipped)
+		if result.Failed > 0 || result.DeadLettered > 0 || len(errs) > 0 {
+			return 1
+		}
+		return 0
+	default:
+		fmt.Println("Unknown queue subcommand:", args[0])
+		return 1
+	}
+}
+
 func backgroundReplayLoop(ctx context.Context, apiKey, baseURL string, intervalSec int) {
 	if intervalSec <= 0 {
 		intervalSec = defaultReplayInterval
 	}
+	if j := getReplayJitter(); j > 0 {
+		select {
+		case <-ctx.Done():
+			return
+		case <-time.After(j):
+		}
+	}
 	ticker := time.NewTicker(time.Duration(intervalSec) * time.Second)
 	defer ticker.Stop()
+	// Flush once after startup jitter, then on interval.
+	_ = replayFailedPayloads(apiKey, baseURL, getQueueDir(), defaultMaxAttempts)
 	for {
 		select {
 		case <-ctx.Done():
