@@ -12,12 +12,12 @@ SEER watches cron jobs, ETL pipelines, workers, and long-running batch work. Whe
 
 ## Why SEER
 
-| Problem | What SEER does |
-| ------- | -------------- |
-| Network blip → false “job missed” | Offline queue + idempotent register/complete |
-| Monitoring outage fails your job | Uploads never override your exit code / exception |
+| Problem                                  | What SEER does                                           |
+| ---------------------------------------- | -------------------------------------------------------- |
+| Network blip → false “job missed”        | Offline queue + idempotent register/complete             |
+| Monitoring outage fails your job         | Uploads never override your exit code / exception        |
 | Cron wrappers only work for one language | CLI wraps **any** command; Python gets a first-class SDK |
-| Self-host needs a dashboard | CE server ships ingest **and** `/ui` in one binary |
+| Self-host needs a dashboard              | CE server ships ingest **and** `/ui` in one binary       |
 
 ```text
 Your job runs locally
@@ -64,11 +64,11 @@ CE includes Slack webhook + SMTP alerts, per-job notify settings, heartbeat miss
 
 ## Monorepo map
 
-| Path | Package | Role |
-| ---- | ------- | ---- |
-| [`sdks/python/`](sdks/python/) | **seerpy** | Python SDK — `monitor()`, heartbeats, offline queue, Celery |
-| [`cli/`](cli/) | **seer** | Wrap any command — `run`, `heartbeat`, `queue`, `replay` |
-| [`server/`](server/) | **seer-server** | CE ingest + alerts + embedded ops UI |
+| Path                           | Package         | Role                                                        |
+| ------------------------------ | --------------- | ----------------------------------------------------------- |
+| [`sdks/python/`](sdks/python/) | **seerpy**      | Python SDK — `monitor()`, heartbeats, offline queue, Celery |
+| [`cli/`](cli/)                 | **seer**        | Wrap any command — `run`, `heartbeat`, `queue`, `replay`    |
+| [`server/`](server/)           | **seer-server** | CE ingest + alerts + embedded ops UI                        |
 
 SDK and CLI share the same envelope format and default queue path (`~/.seer/queue`).
 
@@ -151,10 +151,12 @@ Paste the block below into Cursor (or any coding agent) to stand up and verify t
 You are working in the SEER monorepo. Goal: start Community Edition, exercise CLI + Python SDK against it, and confirm the UI. Do not commit unless asked.
 
 ## 0) Prerequisites
+
 - Go 1.22+, Python 3.10+, network for first `pip`/`go` module fetch
 - Workspace root: this repo (contains `cli/`, `sdks/python/`, `server/`)
 
 ## 1) Start CE server (background)
+
 ```powershell
 cd server
 $env:SEER_API_KEYS = "dev-key"
@@ -164,12 +166,15 @@ $env:SEER_NOTIFY_ON_FAILURE = "true"
 $env:SEER_REPLAY_JITTER_MS = "0"   # only for clients; server ignores this
 go run ./cmd/seer-server
 ```
+
 Wait until logs show listening / UI enabled. Health check:
+
 ```powershell
 Invoke-RestMethod http://127.0.0.1:8080/health
 ```
 
 ## 2) Build CLI and run jobs
+
 ```powershell
 cd cli
 go build -o seer.exe .
@@ -186,50 +191,40 @@ New-Item -ItemType Directory -Force -Path $env:SEER_QUEUE_DIR | Out-Null
 ```
 
 ## 3) Python SDK smoke
+
 ```powershell
 cd sdks/python
 pip install -e ".[dev,celery]" -q
 $env:SEER_API_KEY = "dev-key"
 $env:SEER_BASE_URL = "http://127.0.0.1:8080"
 $env:SEER_REPLAY_JITTER_MS = "0"
-python -c "from seerpy import Seer; s=Seer(api_key='dev-key', base_url='http://127.0.0.1:8080', auto_replay=True); 
+python -c "from seerpy import Seer; s=Seer(api_key='dev-key', base_url='http://127.0.0.1:8080', auto_replay=True);
 exec('with s.monitor(\"agent_py\", capture_logs=True):\n print(\"hello from seerpy\")')"
 python -m pytest tests/ -q
 ```
 
 ## 4) Server unit tests
+
 ```powershell
 cd server
 go test ./...
 ```
 
 ## 5) UI check
+
 Open http://127.0.0.1:8080/ui/login — API key `dev-key`. Confirm jobs `agent_etl`, `agent_fail`, `agent_worker`, `agent_py` appear with runs/heartbeats.
 
 ## 6) Optional cloud note
+
 Cloud dashboard is https://seer.ansrstudio.com — for cloud, set SEER_API_KEY from the dashboard and omit SEER_BASE_URL (defaults to https://api.ansrstudio.com). Job names must exist in the cloud dashboard; CE auto-creates jobs.
 
 ## Success criteria
+
 - /health returns ok
 - CLI success + failure runs complete; failure preserves non-zero exit
 - pytest green; server go test green
 - UI lists the demo jobs after login
 ````
-
----
-
-## Community vs Enterprise
-
-| Community / this repo | Enterprise / Cloud |
-| --------------------- | ------------------ |
-| SDK + CLI agents | Hosted dashboard at [seer.ansrstudio.com](https://seer.ansrstudio.com) |
-| Self-host CE server + `/ui` | Team RBAC, Okta / SSO |
-| Slack webhook + SMTP | PagerDuty / Datadog sync |
-| Offline queue + DLQ tools | Managed scale, SOC 2 / VPC options |
-
-CE `/enterprise/*` returns a stable **402** so clients can detect edition without shipping EE code.
-
----
 
 ## CI
 
